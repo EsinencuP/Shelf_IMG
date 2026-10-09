@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from 'react';
 
-export default function BlobImage({ blob, alt, className = '' }: { blob?: Blob; alt: string; className?: string }) {
+export default function BlobImage({
+  blob,
+  alt,
+  className = '',
+}: {
+  blob?: Blob;
+  alt: string;
+  className?: string;
+}) {
   const [url, setUrl] = useState('');
   useEffect(() => {
     if (!blob) return;

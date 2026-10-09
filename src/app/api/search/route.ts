@@ -8,6 +8,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     guardRequest(request);
     const product = validateProduct(await readJson(request));
-    return await boundedWork(async () => Response.json(await searchProducts(product), { headers: { 'Cache-Control': 'no-store' } }));
-  } catch (error) { return errorResponse(error); }
+    return await boundedWork(async () =>
+      Response.json(await searchProducts(product), { headers: { 'Cache-Control': 'no-store' } }),
+    );
+  } catch (error) {
+    return errorResponse(error);
+  }
 }

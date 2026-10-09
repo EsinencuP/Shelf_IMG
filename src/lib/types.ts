@@ -1,4 +1,5 @@
-export type RowStatus = 'pending' | 'searching' | 'review' | 'processing' | 'ready' | 'not_found' | 'error';
+export type RowStatus =
+  'pending' | 'searching' | 'review' | 'processing' | 'ready' | 'not_found' | 'error';
 export type RightsStatus = 'open_license' | 'unknown' | 'user_owned';
 
 export interface Candidate {
@@ -39,6 +40,8 @@ export interface ProductRow {
   confirmed?: boolean;
   rightsConfirmed?: boolean;
   processingMethod?: string;
+  inputWarnings?: string[];
+  vision?: VisionResult;
   qualityWarnings: string[];
   error?: string;
 }
@@ -59,12 +62,55 @@ export interface Batch {
   profile: ExportProfile;
 }
 
-export type ImportField = 'sku' | 'internalCode' | 'ean' | 'nameRu' | 'nameRo' | 'brand' | 'quantity' | 'widthMm' | 'heightMm' | 'depthMm';
+export type ImportField =
+  | 'sku'
+  | 'internalCode'
+  | 'ean'
+  | 'nameRu'
+  | 'nameRo'
+  | 'brand'
+  | 'quantity'
+  | 'widthMm'
+  | 'heightMm'
+  | 'depthMm';
 export type ColumnMapping = Partial<Record<ImportField, number>>;
-export interface ParsedSheet { name: string; headers: string[]; rows: string[][]; warnings: string[] }
-export interface SearchResponse { candidates: Candidate[]; warnings: string[] }
-export interface AppConfig { braveConfigured: boolean; geminiConfigured: boolean; accessProtected: boolean }
-export interface VisionResult { verdict: 'consistent' | 'conflict' | 'uncertain'; brand: string; quantity: string; variant: string; reasons: string[] }
+export interface ParsedSheet {
+  name: string;
+  headers: string[];
+  rows: string[][];
+  warnings: string[];
+}
+export interface SearchResponse {
+  candidates: Candidate[];
+  warnings: string[];
+}
+export interface AppConfig {
+  braveConfigured: boolean;
+  geminiConfigured: boolean;
+  accessProtected: boolean;
+  serverReady?: boolean;
+}
+export interface VisionResult {
+  verdict: 'consistent' | 'conflict' | 'uncertain';
+  brand: string;
+  quantity: string;
+  variant: string;
+  reasons: string[];
+}
 
-export const DEFAULT_PROFILE: ExportProfile = { naming: 'sku', maxSide: 1600, quality: 0.95, background: '#ffffff', method: 'ai' };
-export const STATUS_LABELS: Record<RowStatus, string> = { pending: 'Ожидает поиска', searching: 'Идёт поиск', review: 'На проверке', processing: 'Обработка', ready: 'Готово', not_found: 'Не найдено', error: 'Ошибка' };
+export const DEFAULT_PROFILE: ExportProfile = {
+  naming: 'sku',
+  maxSide: 1600,
+  quality: 0.95,
+  background: '#ffffff',
+  method: 'ai',
+};
+export const STATUS_LABELS: Record<RowStatus, string> = {
+  pending: 'Ожидает поиска',
+  searching: 'Идёт поиск',
+  review: 'На проверке',
+  processing: 'Обработка',
+  ready: 'Готово',
+  not_found: 'Не найдено',
+  error: 'Ошибка',
+};

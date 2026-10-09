@@ -13,7 +13,7 @@ The application does not generate packaging, labels, logos or missing product re
 - SHA-256: `309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8`.
 - MD5 published by rembg: `8e83ca70e441ab06c318d82300c84806`.
 - Upstream Apache-2.0 license is retained at `public/models/U-2-Net-LICENSE.txt`. Upstream publishes no separate model-specific license for U2NetP; the provenance here is the Apache-2.0 project and its rembg conversion, rather than a claim that every rembg model has that license. Preserve both this notice and the license when distributing the artifact.
-- Paper: Qin et al., *U²-Net: Going Deeper with Nested U-Structure for Salient Object Detection*, Pattern Recognition (2020), <https://arxiv.org/abs/2005.09007>.
+- Paper: Qin et al., _U²-Net: Going Deeper with Nested U-Structure for Salient Object Detection_, Pattern Recognition (2020), <https://arxiv.org/abs/2005.09007>.
 
 ## rembg preprocessing reference
 
@@ -28,7 +28,7 @@ Do not replace this artifact with rembg's current default BRIA RMBG-2.0 model wi
 ## ONNX Runtime Web
 
 - Project: <https://github.com/microsoft/onnxruntime>.
-- License: MIT, copyright Microsoft Corporation. The installed npm package includes its license; retain it with redistributed WASM/runtime assets.
+- License: MIT, copyright Microsoft Corporation. A copy of the upstream license and notices is included at `public/onnx-runtime-LICENSE.txt` and `public/onnx-runtime-ThirdPartyNotices.txt`; retain them with redistributed WASM/runtime assets.
 - Browser execution provider: local WASM; one thread; no paid inference API. Local runtime assets must be copied from exactly the installed `onnxruntime-web` version into `public/onnx/`.
 - Configuration reference: <https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html>.
 
@@ -37,6 +37,8 @@ Do not replace this artifact with rembg's current default BRIA RMBG-2.0 model wi
 The model/runtime licenses do not grant rights to photographs downloaded from retailers or manufacturers. Keep original page URLs, source metadata, rights status and user confirmation in the result report. User-uploaded or photographed assets also require the user's authority to use them. Unknown rights do not become an open license after removing the background.
 
 ## Output limitations
+
+Golos Text and Manrope are self-hosted through `@fontsource-variable/golos-text` and `@fontsource-variable/manrope` (SIL Open Font License 1.1). Their installed packages retain the font license. The interface makes no Google Fonts requests.
 
 Canvas JPEG encoding uses the browser's encoder. The app requests the configured JPEG quality and produces an opaque white image, but cannot force chroma subsampling, baseline encoding or a specific ICC profile across all browsers. Background boundary pixels can vary slightly after lossy JPEG compression. Import should be checked in the user's actual Shelf product/version. A front image alone is not a claim of full GS1 image-set compliance.
 

@@ -12,9 +12,23 @@ export async function GET(request: Request): Promise<Response> {
     if (!url) throw new ApiError(422, 'Не указан URL изображения.');
     return await boundedWork(async () => {
       const result = await publicGet(url, { maxBytes: MAX_IMAGE_BYTES });
-      if (result.status !== 200) throw new ApiError(result.status === 404 ? 404 : 502, 'Источник не предоставил изображение.');
+      if (result.status !== 200)
+        throw new ApiError(
+          result.status === 404 ? 404 : 502,
+          'Источник не предоставил изображение.',
+        );
       const { mime } = await inspectImage(result.body);
-      return new Response(new Uint8Array(result.body), { headers: { 'Content-Type': mime, 'Content-Length': String(result.body.length), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' } });
+      return new Response(new Uint8Array(result.body), {
+        headers: {
+          'Content-Type': mime,
+          'Content-Length': String(result.body.length),
+          'Cache-Control': 'private, no-store',
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Disposition': 'inline',
+        },
+      });
     });
-  } catch (error) { return errorResponse(error); }
+  } catch (error) {
+    return errorResponse(error);
+  }
 }
