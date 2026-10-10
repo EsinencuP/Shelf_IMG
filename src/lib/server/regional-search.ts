@@ -152,7 +152,7 @@ export function linellaLinks(
 
 async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
   const links = new Map<string, { title: string; url: string; thumbnail: string }>();
-  for (const query of nativeQueries(product).slice(0, 2)) {
+  for (const query of nativeQueries(product).slice(0, 3)) {
     const html = await publicHtml(
       `https://linella.md/?${new URLSearchParams({ dispatch: 'products.search', q: query, search_performed: 'Y', sl: /[а-я]/i.test(query) ? 'ru' : 'ro' })}`,
     );

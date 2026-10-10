@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { searchProducts } from '@/lib/server/search';
+import { searchRegionalSources } from '@/lib/server/regional-search';
 import { validateSearchOptions } from '@/lib/server/validation';
 import { publicJson, publicHtml } from '@/lib/server/catalog-utils';
 import { searchSupplementalCatalogs } from '@/lib/server/supplemental-search';
@@ -24,11 +25,39 @@ vi.mock('@/lib/server/supplemental-search', async (original) => ({
 const product = { ean: '', nameRu: 'Творог JLC 500 г', nameRo: '', brand: 'JLC', quantity: '500g' };
 afterEach(() => {
   vi.clearAllMocks();
+  vi.mocked(publicHtml).mockResolvedValue('<html></html>');
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
 describe('search modes and API budgets', () => {
+  it('Linella tries RU after an empty EAN and RO search, preserving exact product evidence', async () => {
+    vi.mocked(publicHtml).mockImplementation(async (url) => {
+      if (new URL(url).searchParams.get('q') === 'Творог JLC')
+        return '<div class="ut2-gl__item"><a class="product-title" href="https://linella.md/ru/tvorog-jlc">Творог JLC 0% 500 г</a><img src="https://linella.md/test.jpg"/></div>';
+      if (new URL(url).pathname === '/ru/tvorog-jlc')
+        return '<script type="application/ld+json">{"@type":"Product","name":"Творог JLC 0% 500 г","brand":"JLC","gtin13":"4840053004404","image":"https://linella.md/test.jpg"}</script>';
+      return '<html></html>';
+    });
+    const result = await searchRegionalSources(
+      {
+        ...product,
+        ean: '4840053004404',
+        nameRu: 'Творог JLC 0% 500 г',
+        nameRo: 'Branza JLC 0% 500g',
+      },
+      'moldova',
+    );
+    expect(
+      vi
+        .mocked(publicHtml)
+        .mock.calls.map(([url]) => new URL(url).searchParams.get('q'))
+        .filter(Boolean),
+    ).toEqual(['4840053004404', 'Branza JLC', 'Творог JLC']);
+    expect(result.candidates).toMatchObject([
+      { source: 'Linella', gtinExact: true, gtin: '4840053004404' },
+    ]);
+  });
   it('omitted options preserve expanded coverage and invalid budgets cannot reach providers', async () => {
     expect(validateSearchOptions(undefined)).toEqual(DEFAULT_SEARCH_OPTIONS);
     for (const options of [
