@@ -22,6 +22,10 @@ export interface GetOptions {
   timeoutMs?: number;
   accept?: string;
   userAgent?: string;
+  method?: 'GET' | 'POST';
+  body?: string;
+  headers?: Record<string, string>;
+  followRedirects?: boolean;
 }
 export type Transport = (
   url: URL,
@@ -137,12 +141,13 @@ const transport: Transport = (url, address, options) =>
     const req = httpsRequest(
       url,
       {
-        method: 'GET',
+        method: options.method || 'GET',
         agent: false,
         headers: {
           'User-Agent': options.userAgent || USER_AGENT,
           Accept: options.accept || 'image/jpeg,image/png,image/webp',
           'Accept-Encoding': 'identity',
+          ...options.headers,
         },
         // Pin the socket to the address validated above, preserving hostname and TLS verification.
         lookup: (_hostname, lookupOptions, callback) => {
@@ -201,7 +206,7 @@ const transport: Transport = (url, address, options) =>
     timer.unref();
     req.on('close', () => clearTimeout(timer));
     req.on('error', fail);
-    req.end();
+    req.end(options.body);
   });
 
 export async function publicGet(
@@ -214,6 +219,12 @@ export async function publicGet(
     const { url, address } = await resolvePublicUrl(current, dependencies.resolver);
     const result = await (dependencies.transport || transport)(url, address, options);
     if ([301, 302, 303, 307, 308].includes(result.status)) {
+      if (
+        options.followRedirects === false ||
+        options.method === 'POST' ||
+        options.headers?.Authorization
+      )
+        throw new ApiError(502, 'Перенаправление сервисного API запрещено.');
       if (!result.headers.location || hop === 3)
         throw new ApiError(502, 'Слишком много перенаправлений источника.');
       current = new URL(result.headers.location, url).href;

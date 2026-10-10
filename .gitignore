@@ -10,3 +10,4 @@ playwright-report/
 *.tsbuildinfo
 .DS_Store
 public/onnx/
+infra/free-search/settings.local.yml

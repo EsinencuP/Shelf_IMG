@@ -37,7 +37,7 @@ test('search and JPEG defaults persist before importing; settings fit mobile and
     .getByRole('combobox', { name: 'Режим поиска', exact: true })
     .selectOption('expanded');
   await dialog.getByLabel('Лимит веб-запросов на SKU').selectOption('1');
-  await dialog.getByLabel('Использовать веб-поиск Brave').uncheck();
+  await dialog.getByLabel('Использовать бесплатный веб-поиск').uncheck();
   await expect(dialog.getByLabel('Лимит веб-запросов на SKU')).toBeDisabled();
 });
 

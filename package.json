@@ -16,6 +16,9 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "setup:model": "node scripts/setup-model.mjs",
+    "search:setup": "node scripts/setup-search.mjs",
+    "search:start": "docker compose --env-file infra/free-search/.env -f infra/free-search/compose.yml up -d",
+    "search:stop": "docker compose --env-file infra/free-search/.env -f infra/free-search/compose.yml stop",
     "postinstall": "node scripts/setup-onnx.mjs"
   },
   "dependencies": {

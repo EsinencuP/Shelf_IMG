@@ -178,6 +178,9 @@ describe('API input and access boundaries', () => {
     expect((await sessionGet(new Request('https://shelf.site/api/session'))).status).toBe(503);
     expect(await (await configGet()).json()).toEqual({
       braveConfigured: false,
+      searxngConfigured: false,
+      tavilyConfigured: false,
+      crawl4aiConfigured: false,
       geminiConfigured: false,
       accessProtected: false,
       serverReady: false,
@@ -392,7 +395,10 @@ describe('matching and source evidence', () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0].gtinExact).toBe(true);
     expect(fetcher.mock.calls[0]?.[0]).toContain(`/product/${product.ean}.json`);
-    expect(result.warnings.join(' ')).toContain('BRAVE_SEARCH_API_KEY');
+    expect(result.diagnostics?.find((source) => source.id === 'tavily')).toMatchObject({
+      status: 'skipped',
+      message: expect.stringContaining('квота сохранена'),
+    });
   });
   it('reports a provider outage as an error instead of a false not-found result', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
@@ -402,22 +408,9 @@ describe('matching and source evidence', () => {
     );
     await expect(searchProducts(product)).rejects.toMatchObject({ status: 502 });
   });
-  it('keeps image candidates when web fails and respects the configured query budget', async () => {
+  it('never sends a legacy Brave key to an API in free-only mode', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'server-only-key');
-    vi.stubEnv('SEARCH_MAX_WEB_QUERIES', '1');
-    const fetcher = vi.fn(async (url: string) =>
-      url.includes('/images/search')
-        ? Response.json({
-            results: [
-              {
-                title: 'Bottle 500ml',
-                url: 'https://shop.site/item',
-                properties: { url: 'https://cdn.site/front.jpg' },
-              },
-            ],
-          })
-        : new Response('', { status: 429 }),
-    );
+    const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
     const result = await searchProducts({
       ean: '',
@@ -426,10 +419,10 @@ describe('matching and source evidence', () => {
       brand: '',
       quantity: '500ml',
     });
-    expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].gtinExact).toBe(false);
-    expect(result.warnings.join(' ')).toContain('Brave Web');
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.diagnostics?.find((source) => source.id === 'brave')).toMatchObject({
+      status: 'skipped',
+    });
   });
 });
 

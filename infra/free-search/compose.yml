@@ -1,0 +1,36 @@
+services:
+  searxng:
+    # Registry digest inspected 2026-10-10; upstream is AGPL-3.0.
+    image: ghcr.io/searxng/searxng@sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272
+    user: '977:977'
+    environment:
+      FORCE_OWNERSHIP: 'false'
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./settings.local.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+  crawl4ai:
+    # Upstream v0.9.4; includes authenticated API and browser egress controls.
+    image: unclecode/crawl4ai@sha256:9021b3cb5c6f12570bbcd5395638495e0a06969b3148e377b953d174af2ebc9b
+    ports:
+      - '127.0.0.1:11235:11235'
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:?Run npm run search:setup first}
+      SECRET_KEY: ${CRAWL4AI_SECRET_KEY:?Run npm run search:setup first}
+      CRAWL4AI_HOOKS_ENABLED: 'false'
+    shm_size: 1gb
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2g
+    pids_limit: 256
+    healthcheck:
+      test: [CMD, curl, -f, 'http://localhost:11235/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

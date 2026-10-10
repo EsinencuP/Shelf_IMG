@@ -112,6 +112,9 @@ export interface SearchDiagnostic {
 }
 export interface AppConfig {
   braveConfigured: boolean;
+  searxngConfigured?: boolean;
+  tavilyConfigured?: boolean;
+  crawl4aiConfigured?: boolean;
   geminiConfigured: boolean;
   accessProtected: boolean;
   serverReady?: boolean;

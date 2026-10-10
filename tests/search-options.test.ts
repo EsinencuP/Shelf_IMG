@@ -115,13 +115,13 @@ describe('search modes and API budgets', () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.diagnostics?.find((source) => source.id === 'metro-ua')?.status).toBe('ok');
   });
-  it('client request budget can reduce the server budget to one image/web pair', async () => {
+  it('a legacy Brave key never activates paid search', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-key');
     vi.stubEnv('SEARCH_MAX_WEB_QUERIES', '6');
     const fetcher = vi.fn(async () => Response.json({ results: [], web: { results: [] } }));
     vi.stubGlobal('fetch', fetcher);
     await searchProducts(product, { ...DEFAULT_SEARCH_OPTIONS, webQueryLimit: 1 });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

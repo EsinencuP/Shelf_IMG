@@ -814,20 +814,22 @@ export default function Workspace() {
                       </span>
                     </div>
                   )}
-                  {!config.braveConfigured && config.serverReady !== false && (
-                    <div className="source-notice">
-                      <Globe size={17} />
-                      <p>
-                        {searchOptions.mode === 'moldova'
-                          ? 'Режим «Молдова»: местные каталоги и Open Food Facts по EAN. Для большего охвата расширьте поиск в настройках или карточке SKU.'
-                          : 'Рынок: Молдова. Работают прямые каталоги магазинов и производителей, региональные источники и базы EAN. Общий веб-поиск Brave пока не подключён.'}
-                      </p>
-                      <button className="text-button" onClick={() => setTab('sources')}>
-                        Источники
-                        <ArrowRight size={14} />
-                      </button>
-                    </div>
-                  )}
+                  {!config.searxngConfigured &&
+                    !config.tavilyConfigured &&
+                    config.serverReady !== false && (
+                      <div className="source-notice">
+                        <Globe size={17} />
+                        <p>
+                          {searchOptions.mode === 'moldova'
+                            ? 'Режим «Молдова»: местные каталоги и Open Food Facts по EAN. Для большего охвата расширьте поиск в настройках или карточке SKU.'
+                            : 'Рынок: Молдова. Работают прямые каталоги магазинов и производителей, региональные источники и базы EAN. Для общего веб-поиска подключите SearXNG или Tavily Free.'}
+                        </p>
+                        <button className="text-button" onClick={() => setTab('sources')}>
+                          Источники
+                          <ArrowRight size={14} />
+                        </button>
+                      </div>
+                    )}
                   <div className="batch-toolbar">
                     <div className="toolbar-actions">
                       <button
@@ -1177,12 +1179,28 @@ export default function Workspace() {
                   detail="Бесплатный тариф: до 100 запросов в день, ограничение частоты. Платный переход отсутствует."
                 />
                 <SourceCard
-                  name="Brave Search"
-                  type="ОБЩИЙ ПОИСК ИЗОБРАЖЕНИЙ"
-                  status={config.braveConfigured ? 'Подключён' : 'Нужен API-ключ'}
-                  enabled={config.braveConfigured}
-                  description="Поиск в интернете по штрихкоду и названиям RU / RO. Фотографии сторонних сайтов требуют проверки прав."
-                  detail="Подключение: BRAVE_SEARCH_API_KEY на сервере. Запросы расходуют квоту провайдера."
+                  name="SearXNG"
+                  type="БЕСПЛАТНЫЙ ВЕБ-ПОИСК"
+                  status={config.searxngConfigured ? 'Адрес настроен' : 'Нужен собственный сервер'}
+                  enabled={!!config.searxngConfigured}
+                  description="Поиск страниц и изображений по EAN и названиям RU / RO. Без LLM и оплаты поискового API; работает на вашем оборудовании."
+                  detail="Доступность движков проверяется при поиске. В расширенном режиме используется первым."
+                />
+                <SourceCard
+                  name="Tavily Free"
+                  type="РЕЗЕРВНЫЙ ВЕБ-ПОИСК"
+                  status={config.tavilyConfigured ? 'Ключ настроен' : 'Нужен бесплатный API-ключ'}
+                  enabled={!!config.tavilyConfigured}
+                  description="1 000 кредитов в месяц без карты. Один basic-запрос на SKU по умолчанию. Тариф и остаток проверяются до поиска."
+                  detail="При платном тарифе, включённом pay-as-you-go или исчерпанной квоте запрос не выполняется."
+                />
+                <SourceCard
+                  name="Crawl4AI"
+                  type="ЧТЕНИЕ КАРТОЧЕК ТОВАРОВ"
+                  status={config.crawl4aiConfigured ? 'Сервис настроен' : 'Не подключён'}
+                  enabled={!!config.crawl4aiConfigured}
+                  description="Загружает динамические карточки через Chromium без LLM. Извлекает данные Product и фотографии; сам не ищет товары."
+                  detail="До одной страницы на SKU, только разрешённые домены. EAN и фасовка проверяются обычными правилами."
                 />
                 <SourceCard
                   name="Gemini"
@@ -1221,9 +1239,9 @@ export default function Workspace() {
               <section className="regional-source-panel">
                 <h2>Производители и дополнительные площадки</h2>
                 <p className="muted small">
-                  При подключённом Brave запросы расширяются на оба языка и домены Молдовы, России,
-                  Беларуси, Украины и Румынии. Следующие домены — ориентиры поиска по индексу,
-                  отдельный прямой коннектор к каждому из них не заявляется.
+                  При подключённом веб-поиске запросы расширяются на оба языка и домены Молдовы,
+                  России, Беларуси, Украины и Румынии. Следующие домены — ориентиры поиска по
+                  индексу, отдельный прямой коннектор к каждому из них не заявляется.
                 </p>
                 <div className="indexed-source-tags">
                   {INDEXED_DOMAINS.map((domain) => (
@@ -1309,7 +1327,7 @@ export default function Workspace() {
                       updateSearchOptions({ ...searchOptions, useWeb: event.target.checked })
                     }
                   />
-                  <span>Использовать веб-поиск Brave в расширенном режиме</span>
+                  <span>Использовать бесплатный веб-поиск в расширенном режиме</span>
                 </label>
                 <label>
                   Лимит веб-запросов на SKU
@@ -1330,11 +1348,12 @@ export default function Workspace() {
                   </select>
                 </label>
                 <p className="muted small">
-                  Каждый запрос: до 2 вызовов Brave (изображения и страницы). Сервер может
-                  ограничить лимит ниже.{' '}
-                  {config.braveConfigured
-                    ? 'Brave подключён; учитывайте квоту вашего API.'
-                    : 'Ключ Brave не задан: вызовов этого API сейчас нет.'}{' '}
+                  SearXNG использует указанный лимит; Tavily — один запрос на SKU по умолчанию, с
+                  отдельным серверным пределом. Не более трёх карточек и одной страницы Crawl4AI на
+                  SKU.{' '}
+                  {config.searxngConfigured || config.tavilyConfigured
+                    ? 'Бесплатный веб-поиск настроен; состояние источников появится в диагностике.'
+                    : 'Веб-поиск ещё не подключён: используются прямые каталоги и базы EAN.'}{' '}
                   Gemini запускается только кнопкой в карточке.
                 </p>
               </div>

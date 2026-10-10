@@ -7,13 +7,12 @@ import {
   type SearchOptions,
 } from '../types';
 import { ApiError, readBody } from './http';
-import { publicGet, USER_AGENT, validatePublicUrl } from './public-fetch';
+import { USER_AGENT, validatePublicUrl } from './public-fetch';
 import { matchCandidate } from './matching';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { searchRegionalSources } from './regional-search';
 import { OPEN_CATALOGS, searchSupplementalCatalogs } from './supplemental-search';
-import { webQueries } from './search-queries';
-import { catalogProducts } from './catalog-utils';
+import { configuredWebProviders, searchWebDiscovery } from './web-discovery';
 
 const idFor = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
 const record = (value: unknown): Record<string, unknown> =>
@@ -250,104 +249,6 @@ export function productJsonLdCandidates(
   return candidates;
 }
 
-async function fromBrave(
-  product: SearchProduct,
-  warnings: string[],
-  queryLimit: number,
-): Promise<Candidate[]> {
-  const key = process.env.BRAVE_SEARCH_API_KEY;
-  if (!key) return [];
-  const queries = webQueries(
-    product,
-    Math.max(
-      1,
-      Math.min(queryLimit, 6, Math.floor(Number(process.env.SEARCH_MAX_WEB_QUERIES) || 4)),
-    ),
-  );
-  const headers = { 'X-Subscription-Token': key };
-  const candidates: Candidate[] = [];
-  // Bounded queries, both RU/RO; no automatic retries, pagination or paid provider fallback.
-  let completed = 0;
-  let pagesRead = 0;
-  for (const query of queries) {
-    let images: Record<string, unknown> = {};
-    try {
-      images = await providerJson(
-        `https://api.search.brave.com/res/v1/images/search?${new URLSearchParams({ q: query, count: '12', country: 'ALL', safesearch: 'strict', spellcheck: 'false' })}`,
-        headers,
-      );
-      completed++;
-    } catch (error) {
-      warnings.push(
-        error instanceof ApiError
-          ? `Brave Images: ${error.message}`
-          : 'Brave Images временно недоступен.',
-      );
-    }
-    for (const result of Array.isArray(images.results) ? images.results.slice(0, 12) : []) {
-      const item = record(result);
-      const imageUrl = publicUrl(record(item.properties).url);
-      const pageUrl = publicUrl(item.url);
-      if (
-        !imageUrl ||
-        !pageUrl ||
-        /(?:logo|favicon|icon)(?:[._/-]|$)/i.test(new URL(imageUrl).pathname)
-      )
-        continue;
-      candidates.push({
-        id: idFor(imageUrl),
-        title: text(item.title) || 'Изображение из поиска',
-        imageUrl,
-        pageUrl,
-        source: text(item.source) || new URL(pageUrl).hostname,
-        rights: 'unknown',
-        gtinExact: false,
-        warnings: [
-          'Результат поиска не подтверждает GTIN и вариант упаковки.',
-          'Права использования не подтверждены.',
-        ],
-      });
-    }
-    // Avoid a burst across image/web endpoints on low-rate plans; this is not a durable quota limiter.
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    let web: Record<string, unknown> = {};
-    try {
-      web = await providerJson(
-        `https://api.search.brave.com/res/v1/web/search?${new URLSearchParams({ q: query, count: '6', country: 'ALL', safesearch: 'strict', spellcheck: 'false' })}`,
-        headers,
-      );
-      completed++;
-    } catch (error) {
-      warnings.push(
-        error instanceof ApiError
-          ? `Brave Web: ${error.message}`
-          : 'Brave Web временно недоступен.',
-      );
-    }
-    const pages = record(web.web).results;
-    for (const result of Array.isArray(pages) ? pages.slice(0, 2) : []) {
-      if (pagesRead >= 4) break;
-      const pageUrl = publicUrl(record(result).url);
-      if (!pageUrl) continue;
-      pagesRead++;
-      try {
-        const page = await publicGet(pageUrl, {
-          maxBytes: 750_000,
-          timeoutMs: 8_000,
-          accept: 'text/html',
-        });
-        if (page.status === 200 && page.headers['content-type']?.includes('text/html'))
-          candidates.push(...catalogProducts(page.body.toString('utf8'), page.url, product, true));
-      } catch {
-        warnings.push('Одна из страниц источника недоступна или отклонена проверкой безопасности.');
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-  }
-  if (!completed) throw new ApiError(502, 'Поиск Brave временно недоступен или квота исчерпана.');
-  return candidates;
-}
-
 export async function searchProducts(
   product: SearchProduct,
   options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
@@ -410,47 +311,47 @@ export async function searchProducts(
         message: 'Отключён в режиме «Молдова».',
       })),
     );
-  if (!webEnabled) {
+  const providers = configuredWebProviders();
+  const exactFound = candidates.some((candidate) => {
+    const matched = matchCandidate(product, candidate);
+    return !matched.rejected && matched.candidate.gtinExact;
+  });
+  if (!webEnabled || !providers.length || exactFound) {
+    for (const provider of ['searxng', 'tavily'])
+      diagnostics.push({
+        id: provider,
+        source: provider === 'searxng' ? 'SearXNG' : 'Tavily Free',
+        status: webEnabled && !exactFound ? 'not_configured' : 'skipped',
+        count: 0,
+        elapsedMs: 0,
+        message: exactFound
+          ? 'Прямой каталог уже дал точный EAN без конфликтов; веб-квота сохранена.'
+          : webEnabled
+            ? 'Нужна настройка сервиса на сервере.'
+            : options.mode === 'moldova'
+              ? 'Отключён в режиме «Молдова».'
+              : 'Веб-поиск выключен в настройках.',
+      });
+    if (webEnabled && !providers.length && !exactFound)
+      warnings.push(
+        'Общий веб-поиск не подключён: доступны прямые каталоги и базы EAN. Подключите SearXNG или Tavily Free.',
+      );
+  } else {
+    const result = await searchWebDiscovery(product, options.webQueryLimit);
+    candidates.push(...result.candidates);
+    diagnostics.push(...result.diagnostics);
+    warnings.push(...result.warnings);
+    successfulSources += result.diagnostics.filter((item) => item.status === 'ok').length;
+  }
+  if (process.env.BRAVE_SEARCH_API_KEY)
     diagnostics.push({
       id: 'brave',
       source: 'Brave Search',
       status: 'skipped',
       count: 0,
       elapsedMs: 0,
-      message:
-        options.mode === 'moldova'
-          ? 'Отключён в режиме «Молдова».'
-          : 'Веб-поиск выключен в настройках.',
+      message: 'Отключён политикой бесплатного поиска; ключ не используется.',
     });
-  } else if (!process.env.BRAVE_SEARCH_API_KEY)
-    warnings.push(
-      'Brave не подключён: работают прямые региональные каталоги и базы EAN; общий индекс интернета требует BRAVE_SEARCH_API_KEY.',
-    );
-  else
-    try {
-      const start = Date.now();
-      const found = await fromBrave(product, warnings, options.webQueryLimit);
-      candidates.push(...found);
-      diagnostics.push({
-        id: 'brave',
-        source: 'Brave Search',
-        status: 'ok',
-        count: found.length,
-        elapsedMs: Date.now() - start,
-      });
-      successfulSources++;
-    } catch (error) {
-      diagnostics.push({
-        id: 'brave',
-        source: 'Brave Search',
-        status: 'unavailable',
-        count: 0,
-        elapsedMs: 0,
-      });
-      warnings.push(
-        error instanceof ApiError ? `Brave: ${error.message}` : 'Brave Search временно недоступен.',
-      );
-    }
   for (const source of diagnostics.filter((item) => item.status === 'unavailable'))
     warnings.push(
       `${source.source}: ${(source.message || 'источник временно недоступен').replace(/[.!]+$/, '')}.`,
@@ -458,7 +359,7 @@ export async function searchProducts(
   if (
     !successfulSources &&
     (product.ean ||
-      process.env.BRAVE_SEARCH_API_KEY ||
+      providers.length > 0 ||
       diagnostics.some((item) => item.status === 'unavailable'))
   )
     throw new ApiError(502, warnings.join(' '));
@@ -475,14 +376,6 @@ export async function searchProducts(
     if (!previous || (!previous.gtinExact && result.candidate.gtinExact))
       byImage.set(candidate.imageUrl, result.candidate);
   }
-  if (webEnabled && !process.env.BRAVE_SEARCH_API_KEY)
-    diagnostics.push({
-      id: 'brave',
-      source: 'Brave Search',
-      status: 'not_configured',
-      count: 0,
-      elapsedMs: 0,
-    });
   return {
     candidates: [...byImage.values()]
       .sort(

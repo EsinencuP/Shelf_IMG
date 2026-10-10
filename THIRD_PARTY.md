@@ -2,6 +2,12 @@
 
 The application does not generate packaging, labels, logos or missing product regions. Browser image processing runs locally. It requests model and WASM files from this application's own origin only. Search/optional vision integrations, if configured separately, have their own terms.
 
+## Optional free search services
+
+- SearXNG runs as a separate service, AGPL-3.0: <https://github.com/searxng/searxng>. Preserve its upstream license/source obligations when hosting or modifying it. Shelf uses its HTTP API; no SearXNG source is bundled in the Next.js application.
+- This project uses Crawl4AI (<https://github.com/unclecode/crawl4ai>) for web data extraction. The optional separate service is Apache-2.0; pinned v0.9.4. No LLM extraction or generated packaging is used.
+- Tavily is accessed via REST under its provider terms, not the Python SDK. The SDK's open-source license does not make the provider API unlimited or grant rights to third-party photos. Only a confirmed free account with paid overage disabled is used.
+
 ## U²-Net / U2NetP
 
 - Authors: Xuebin Qin, Zichen Zhang, Chenyang Huang, Masood Dehghan, Osmar R. Zaiane and Martin Jagersand.
