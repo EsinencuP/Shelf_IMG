@@ -59,7 +59,7 @@ describe('free web discovery', () => {
   });
   it('uses SearXNG first, preserves image provenance and stops after an exact verified card', async () => {
     vi.stubEnv('SEARXNG_URL', 'https://search.shelf.org');
-    vi.stubEnv('TAVILY_API_KEY', 'secret');
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-test-key-00001');
     vi.mocked(serviceJson).mockResolvedValue({
       results: [
         { title: 'Nutella 400 g', url: candidate.pageUrl, img_src: candidate.imageUrl },
@@ -90,7 +90,7 @@ describe('free web discovery', () => {
   });
   it('falls back to free Tavily on SearXNG failure and ignores images without source-page provenance', async () => {
     vi.stubEnv('SEARXNG_URL', 'https://search.shelf.org');
-    vi.stubEnv('TAVILY_API_KEY', 'secret');
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-test-key-00001');
     vi.mocked(serviceJson)
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(free)
@@ -127,7 +127,7 @@ describe('free web discovery', () => {
     { ...free.account, plan_usage: undefined },
   ])('refuses search if a free account cannot be proven (%j)', async (account) => {
     vi.stubEnv('SEARXNG_URL', '');
-    vi.stubEnv('TAVILY_API_KEY', 'secret');
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-test-key-00001');
     vi.mocked(serviceJson).mockResolvedValue({ ...free, account });
     const result = await searchWebDiscovery(product, 4);
     expect(result.candidates).toHaveLength(0);
@@ -136,7 +136,7 @@ describe('free web discovery', () => {
   });
   it('refuses exhausted quota without retry or paid upgrade', async () => {
     vi.stubEnv('SEARXNG_URL', '');
-    vi.stubEnv('TAVILY_API_KEY', 'secret');
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-test-key-00001');
     vi.mocked(serviceJson).mockResolvedValue({
       ...free,
       account: { ...free.account, plan_usage: 995 },
@@ -170,6 +170,22 @@ describe('free web discovery', () => {
     vi.mocked(discoverPage).mockResolvedValue({ candidates: [], rendered: false });
     await searchWebDiscovery(product, 4);
     expect(discoverPage).toHaveBeenCalledTimes(3);
+  });
+  it('supports the observed free-account null paygo schema only after dashboard confirmation', () => {
+    const observed = { ...free, account: { ...free.account, paygo_limit: null } };
+    expect(() => tavilyFreeRemaining(observed)).toThrow();
+    vi.stubEnv('TAVILY_FREE_ACCOUNT_CONFIRMED', 'true');
+    expect(tavilyFreeRemaining(observed)).toBe(895);
+    expect(() =>
+      tavilyFreeRemaining({ ...free, account: { ...free.account, paygo_limit: undefined } }),
+    ).toThrow();
+  });
+  it('does not transmit credentials belonging to a different provider', async () => {
+    vi.stubEnv('SEARXNG_URL', '');
+    vi.stubEnv('TAVILY_API_KEY', 'different-provider-secret');
+    const result = await searchWebDiscovery(product, 1);
+    expect(serviceJson).not.toHaveBeenCalled();
+    expect(result.diagnostics[0].message).toContain('ключ другого провайдера не отправлен');
   });
   it('observes per-key quota as well as account quota', () => {
     expect(tavilyFreeRemaining(free)).toBe(895);

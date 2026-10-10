@@ -1192,7 +1192,7 @@ export default function Workspace() {
                   status={config.tavilyConfigured ? 'Ключ настроен' : 'Нужен бесплатный API-ключ'}
                   enabled={!!config.tavilyConfigured}
                   description="1 000 кредитов в месяц без карты. Один basic-запрос на SKU по умолчанию. Тариф и остаток проверяются до поиска."
-                  detail="При платном тарифе, включённом pay-as-you-go или исчерпанной квоте запрос не выполняется."
+                  detail="Нужен Researcher с выключенным pay-as-you-go. Платный тариф или исчерпанная квота блокируют поиск; настройка аккаунта подтверждается при подключении."
                 />
                 <SourceCard
                   name="Crawl4AI"

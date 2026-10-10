@@ -67,6 +67,7 @@ npm run setup:model
 | `SEARXNG_URL`                         | Адрес собственного SearXNG с включённым JSON. HTTP loopback допускается только в dev, production требует публичный HTTPS. |
 | `SEARXNG_API_TOKEN`                   | Bearer-токен reverse proxy SearXNG, серверный секрет.                                                                     |
 | `TAVILY_API_KEY`                      | Необязательный Tavily Free/Researcher; платный тариф или paygo блокируются адаптером.                                     |
+| `TAVILY_FREE_ACCOUNT_CONFIRMED`       | `true` только после проверки выключенного Pay-as-you-go в кабинете. Нужен для реальной nullable-схемы `/usage`.           |
 | `TAVILY_MAX_QUERIES`                  | 1 basic-запрос/SKU по умолчанию, максимум 2.                                                                              |
 | `CRAWL4AI_URL` / `CRAWL4AI_API_TOKEN` | Адрес и токен собственного Crawl4AI v0.9.4.                                                                               |
 | `CRAWL4AI_ALLOWED_HOSTS`              | Точный список разрешённых доменов через запятую. Без него браузерное извлечение выключено.                                |

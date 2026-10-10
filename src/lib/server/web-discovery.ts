@@ -31,7 +31,10 @@ export function tavilyFreeRemaining(data: Record<string, unknown>): number {
     typeof plan_usage !== 'number' ||
     !Number.isInteger(plan_usage) ||
     plan_usage < 0 ||
-    paygo_limit !== 0 ||
+    !(
+      paygo_limit === 0 ||
+      (paygo_limit === null && process.env.TAVILY_FREE_ACCOUNT_CONFIRMED === 'true')
+    ) ||
     paygo_usage !== 0
   )
     throw new ApiError(
@@ -119,6 +122,11 @@ export async function searchWebDiscovery(
             )
           : Math.min(serverLimit, queryLimit);
       if (provider === 'tavily') {
+        if (!process.env.TAVILY_API_KEY?.startsWith('tvly-'))
+          throw new ApiError(
+            503,
+            'TAVILY_API_KEY должен содержать ключ Tavily; ключ другого провайдера не отправлен.',
+          );
         requests++;
         const usage = await serviceJson(
           new URL('https://api.tavily.com/usage'),
