@@ -1,9 +1,19 @@
 import { createHash } from 'node:crypto';
-import type { Candidate, SearchResponse } from '../types';
+import {
+  DEFAULT_SEARCH_OPTIONS,
+  type Candidate,
+  type SearchDiagnostic,
+  type SearchResponse,
+  type SearchOptions,
+} from '../types';
 import { ApiError, readBody } from './http';
 import { publicGet, USER_AGENT, validatePublicUrl } from './public-fetch';
 import { matchCandidate } from './matching';
 import { normalizeGtin, type SearchProduct } from './validation';
+import { searchRegionalSources } from './regional-search';
+import { OPEN_CATALOGS, searchSupplementalCatalogs } from './supplemental-search';
+import { webQueries } from './search-queries';
+import { catalogProducts } from './catalog-utils';
 
 const idFor = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
 const record = (value: unknown): Record<string, unknown> =>
@@ -23,6 +33,7 @@ const publicUrl = (value: unknown, base?: string): string | null => {
 async function providerJson(
   url: string,
   headers: Record<string, string> = {},
+  emptyOnMissing = false,
 ): Promise<Record<string, unknown>> {
   const response = await fetch(url, {
     cache: 'no-store',
@@ -34,6 +45,7 @@ async function providerJson(
       ...headers,
     },
   });
+  if (response.status === 404 && emptyOnMissing) return { status: 0 };
   if (!response.ok)
     throw new ApiError(
       response.status === 429 ? 429 : 502,
@@ -161,7 +173,11 @@ async function fromOff(product: SearchProduct): Promise<Candidate[]> {
     'code,product_name,product_name_ru,product_name_ro,product_name_en,brands,quantity,images,selected_images,image_front_url,creator';
   // v2 remains supported and supplies the documented selected front image/uploader schema.
   const data = await pacedOff(() =>
-    providerJson(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${fields}`),
+    providerJson(
+      `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${fields}`,
+      {},
+      true,
+    ),
   );
   return offCandidates(data, product);
 }
@@ -234,73 +250,86 @@ export function productJsonLdCandidates(
   return candidates;
 }
 
-async function fromBrave(product: SearchProduct, warnings: string[]): Promise<Candidate[]> {
+async function fromBrave(
+  product: SearchProduct,
+  warnings: string[],
+  queryLimit: number,
+): Promise<Candidate[]> {
   const key = process.env.BRAVE_SEARCH_API_KEY;
   if (!key) return [];
-  const query = (
-    product.ean
-      ? `"${product.ean.replace(/[\s-]/g, '')}"`
-      : [product.brand, product.nameRo || product.nameRu, product.quantity]
-          .filter(Boolean)
-          .join(' ')
-  ).slice(0, 400);
+  const queries = webQueries(
+    product,
+    Math.max(
+      1,
+      Math.min(queryLimit, 6, Math.floor(Number(process.env.SEARCH_MAX_WEB_QUERIES) || 4)),
+    ),
+  );
   const headers = { 'X-Subscription-Token': key };
   const candidates: Candidate[] = [];
-  // Two API calls total per SKU: one original-image search and one web search. No pagination/retries.
+  // Bounded queries, both RU/RO; no automatic retries, pagination or paid provider fallback.
   let completed = 0;
-  let images: Record<string, unknown> = {};
-  try {
-    images = await providerJson(
-      `https://api.search.brave.com/res/v1/images/search?${new URLSearchParams({ q: query, count: '6', country: 'ALL', safesearch: 'strict', spellcheck: 'false' })}`,
-      headers,
-    );
-    completed++;
-  } catch (error) {
-    warnings.push(
-      error instanceof ApiError
-        ? `Brave Images: ${error.message}`
-        : 'Brave Images временно недоступен.',
-    );
-  }
-  for (const result of Array.isArray(images.results) ? images.results.slice(0, 6) : []) {
-    const item = record(result);
-    const imageUrl = publicUrl(record(item.properties).url);
-    const pageUrl = publicUrl(item.url);
-    if (!imageUrl || !pageUrl) continue;
-    candidates.push({
-      id: idFor(imageUrl),
-      title: text(item.title) || 'Изображение из поиска',
-      imageUrl,
-      pageUrl,
-      source: text(item.source) || new URL(pageUrl).hostname,
-      rights: 'unknown',
-      gtinExact: false,
-      warnings: [
-        'Результат поиска не подтверждает GTIN и вариант упаковки.',
-        'Права использования не подтверждены.',
-      ],
-    });
-  }
-  // Avoid a burst across image/web endpoints on low-rate plans; this is not a durable quota limiter.
-  await new Promise((resolve) => setTimeout(resolve, 1_100));
-  let web: Record<string, unknown> = {};
-  try {
-    web = await providerJson(
-      `https://api.search.brave.com/res/v1/web/search?${new URLSearchParams({ q: query, count: '3', country: 'ALL', safesearch: 'strict', spellcheck: 'false' })}`,
-      headers,
-    );
-    completed++;
-  } catch (error) {
-    warnings.push(
-      error instanceof ApiError ? `Brave Web: ${error.message}` : 'Brave Web временно недоступен.',
-    );
-  }
-  if (!completed) throw new ApiError(502, 'Оба поиска Brave временно недоступны.');
-  const pages = record(web.web).results;
-  if (product.ean)
+  let pagesRead = 0;
+  for (const query of queries) {
+    let images: Record<string, unknown> = {};
+    try {
+      images = await providerJson(
+        `https://api.search.brave.com/res/v1/images/search?${new URLSearchParams({ q: query, count: '12', country: 'ALL', safesearch: 'strict', spellcheck: 'false' })}`,
+        headers,
+      );
+      completed++;
+    } catch (error) {
+      warnings.push(
+        error instanceof ApiError
+          ? `Brave Images: ${error.message}`
+          : 'Brave Images временно недоступен.',
+      );
+    }
+    for (const result of Array.isArray(images.results) ? images.results.slice(0, 12) : []) {
+      const item = record(result);
+      const imageUrl = publicUrl(record(item.properties).url);
+      const pageUrl = publicUrl(item.url);
+      if (
+        !imageUrl ||
+        !pageUrl ||
+        /(?:logo|favicon|icon)(?:[._/-]|$)/i.test(new URL(imageUrl).pathname)
+      )
+        continue;
+      candidates.push({
+        id: idFor(imageUrl),
+        title: text(item.title) || 'Изображение из поиска',
+        imageUrl,
+        pageUrl,
+        source: text(item.source) || new URL(pageUrl).hostname,
+        rights: 'unknown',
+        gtinExact: false,
+        warnings: [
+          'Результат поиска не подтверждает GTIN и вариант упаковки.',
+          'Права использования не подтверждены.',
+        ],
+      });
+    }
+    // Avoid a burst across image/web endpoints on low-rate plans; this is not a durable quota limiter.
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    let web: Record<string, unknown> = {};
+    try {
+      web = await providerJson(
+        `https://api.search.brave.com/res/v1/web/search?${new URLSearchParams({ q: query, count: '6', country: 'ALL', safesearch: 'strict', spellcheck: 'false' })}`,
+        headers,
+      );
+      completed++;
+    } catch (error) {
+      warnings.push(
+        error instanceof ApiError
+          ? `Brave Web: ${error.message}`
+          : 'Brave Web временно недоступен.',
+      );
+    }
+    const pages = record(web.web).results;
     for (const result of Array.isArray(pages) ? pages.slice(0, 2) : []) {
+      if (pagesRead >= 4) break;
       const pageUrl = publicUrl(record(result).url);
       if (!pageUrl) continue;
+      pagesRead++;
       try {
         const page = await publicGet(pageUrl, {
           maxBytes: 750_000,
@@ -308,44 +337,130 @@ async function fromBrave(product: SearchProduct, warnings: string[]): Promise<Ca
           accept: 'text/html',
         });
         if (page.status === 200 && page.headers['content-type']?.includes('text/html'))
-          candidates.push(
-            ...productJsonLdCandidates(page.body.toString('utf8'), page.url, product),
-          );
+          candidates.push(...catalogProducts(page.body.toString('utf8'), page.url, product, true));
       } catch {
         warnings.push('Одна из страниц источника недоступна или отклонена проверкой безопасности.');
       }
     }
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+  }
+  if (!completed) throw new ApiError(502, 'Поиск Brave временно недоступен или квота исчерпана.');
   return candidates;
 }
 
-export async function searchProducts(product: SearchProduct): Promise<SearchResponse> {
+export async function searchProducts(
+  product: SearchProduct,
+  options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
+): Promise<SearchResponse> {
   const warnings: string[] = [];
   const candidates: Candidate[] = [];
+  const diagnostics: SearchDiagnostic[] = [];
   let successfulSources = 0;
-  try {
-    candidates.push(...(await fromOff(product)));
-    if (product.ean) successfulSources++;
-  } catch (error) {
-    warnings.push(
-      error instanceof ApiError
-        ? `Open Food Facts: ${error.message}`
-        : 'Open Food Facts временно недоступен.',
-    );
+  const offTask = async () => {
+    const offStartedAt = Date.now();
+    try {
+      const found = await fromOff(product);
+      candidates.push(...found);
+      diagnostics.push({
+        id: 'food-facts',
+        source: 'Open Food Facts',
+        status: product.ean ? 'ok' : 'skipped',
+        count: found.length,
+        elapsedMs: Date.now() - offStartedAt,
+      });
+      if (product.ean) successfulSources++;
+    } catch (error) {
+      diagnostics.push({
+        id: 'food-facts',
+        source: 'Open Food Facts',
+        status: 'unavailable',
+        count: 0,
+        elapsedMs: Date.now() - offStartedAt,
+      });
+      warnings.push(
+        error instanceof ApiError
+          ? `Open Food Facts: ${error.message}`
+          : 'Open Food Facts временно недоступен.',
+      );
+    }
+  };
+  const additional = await Promise.all([
+    searchRegionalSources(product, options.mode),
+    options.mode === 'expanded'
+      ? searchSupplementalCatalogs(product)
+      : Promise.resolve({ candidates: [], diagnostics: [] }),
+    offTask().then(() => ({ candidates: [], diagnostics: [] })),
+  ]);
+  for (const result of additional) {
+    candidates.push(...result.candidates);
+    diagnostics.push(...result.diagnostics);
+    successfulSources += result.diagnostics.filter((item) => item.status === 'ok').length;
   }
-  if (!process.env.BRAVE_SEARCH_API_KEY)
+  const webEnabled = options.mode === 'expanded' && options.useWeb;
+  if (options.mode === 'moldova')
+    diagnostics.push(
+      ...[
+        ...OPEN_CATALOGS.map((source) => ({ id: source.id, source: source.name })),
+        { id: 'upcitemdb', source: 'UPCitemdb' },
+      ].map((source): SearchDiagnostic => ({
+        ...source,
+        status: 'skipped',
+        count: 0,
+        elapsedMs: 0,
+        message: 'Отключён в режиме «Молдова».',
+      })),
+    );
+  if (!webEnabled) {
+    diagnostics.push({
+      id: 'brave',
+      source: 'Brave Search',
+      status: 'skipped',
+      count: 0,
+      elapsedMs: 0,
+      message:
+        options.mode === 'moldova'
+          ? 'Отключён в режиме «Молдова».'
+          : 'Веб-поиск выключен в настройках.',
+    });
+  } else if (!process.env.BRAVE_SEARCH_API_KEY)
     warnings.push(
-      'Веб-поиск отключён: BRAVE_SEARCH_API_KEY не настроен. Open Food Facts охватывает только пищевые товары.',
+      'Brave не подключён: работают прямые региональные каталоги и базы EAN; общий индекс интернета требует BRAVE_SEARCH_API_KEY.',
     );
   else
     try {
-      candidates.push(...(await fromBrave(product, warnings)));
+      const start = Date.now();
+      const found = await fromBrave(product, warnings, options.webQueryLimit);
+      candidates.push(...found);
+      diagnostics.push({
+        id: 'brave',
+        source: 'Brave Search',
+        status: 'ok',
+        count: found.length,
+        elapsedMs: Date.now() - start,
+      });
       successfulSources++;
     } catch (error) {
+      diagnostics.push({
+        id: 'brave',
+        source: 'Brave Search',
+        status: 'unavailable',
+        count: 0,
+        elapsedMs: 0,
+      });
       warnings.push(
         error instanceof ApiError ? `Brave: ${error.message}` : 'Brave Search временно недоступен.',
       );
     }
-  if (!successfulSources && (product.ean || process.env.BRAVE_SEARCH_API_KEY))
+  for (const source of diagnostics.filter((item) => item.status === 'unavailable'))
+    warnings.push(
+      `${source.source}: ${(source.message || 'источник временно недоступен').replace(/[.!]+$/, '')}.`,
+    );
+  if (
+    !successfulSources &&
+    (product.ean ||
+      process.env.BRAVE_SEARCH_API_KEY ||
+      diagnostics.some((item) => item.status === 'unavailable'))
+  )
     throw new ApiError(502, warnings.join(' '));
   const byImage = new Map<string, Candidate>();
   for (const candidate of candidates) {
@@ -360,10 +475,24 @@ export async function searchProducts(product: SearchProduct): Promise<SearchResp
     if (!previous || (!previous.gtinExact && result.candidate.gtinExact))
       byImage.set(candidate.imageUrl, result.candidate);
   }
+  if (webEnabled && !process.env.BRAVE_SEARCH_API_KEY)
+    diagnostics.push({
+      id: 'brave',
+      source: 'Brave Search',
+      status: 'not_configured',
+      count: 0,
+      elapsedMs: 0,
+    });
   return {
     candidates: [...byImage.values()]
-      .sort((a, b) => Number(b.gtinExact) - Number(a.gtinExact))
-      .slice(0, 10),
+      .sort(
+        (a, b) =>
+          Number(b.gtinExact) - Number(a.gtinExact) ||
+          Number(!/Moldova|Linella|Bucuria/i.test(a.source)) -
+            Number(!/Moldova|Linella|Bucuria/i.test(b.source)),
+      )
+      .slice(0, 24),
     warnings: [...new Set(warnings)],
+    diagnostics,
   };
 }

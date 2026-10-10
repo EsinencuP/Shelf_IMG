@@ -10,6 +10,7 @@ import {
   resizeMask,
   u2netInput,
   whiteBackgroundMask,
+  lostProductDetail,
 } from '../src/lib/image-math';
 
 test('tight bounds include all extreme product pixels and no margins', () => {
@@ -18,6 +19,54 @@ test('tight bounds include all extreme product pixels and no margins', () => {
   mask[7 * 7 + 4] = 255;
   assert.deepEqual(maskBounds(mask, 7, 9), { x: 2, y: 2, width: 3, height: 6 });
   assert.equal(maskBounds(new Uint8Array(20), 4, 5), null);
+});
+
+test('quality guard rejects an isolated label but permits a complete object or colored scene', () => {
+  const width = 100,
+    height = 100;
+  const pixels = new Uint8ClampedArray(width * height * 4).fill(255);
+  const complete = new Uint8Array(width * height),
+    label = new Uint8Array(width * height);
+  for (let y = 10; y < 90; y++)
+    for (let x = 10; x < 90; x++) {
+      const index = y * width + x,
+        p = index * 4;
+      pixels[p] = 30;
+      pixels[p + 1] = 140;
+      pixels[p + 2] = 70;
+      complete[index] = 255;
+      if (x > 60 && y > 60) label[index] = 255;
+    }
+  assert.equal(lostProductDetail(pixels, label, width, height), true);
+  assert.equal(lostProductDetail(pixels, complete, width, height), false);
+  for (let index = 0; index < complete.length; index++)
+    if (!complete[index]) {
+      pixels[index * 4] = 100;
+      pixels[index * 4 + 1] = 160;
+      pixels[index * 4 + 2] = 220;
+    }
+  assert.equal(lostProductDetail(pixels, label, width, height), false);
+});
+
+test('quality guard ignores light shadows and does not classify a blank white image as ink loss', () => {
+  const width = 100,
+    height = 100;
+  const pixels = new Uint8ClampedArray(width * height * 4).fill(255);
+  const mask = new Uint8Array(width * height);
+  assert.equal(lostProductDetail(pixels, mask, width, height), false);
+  for (let y = 10; y < 90; y++)
+    for (let x = 10; x < 90; x++) {
+      const index = y * width + x,
+        p = index * 4;
+      pixels[p] = pixels[p + 1] = pixels[p + 2] = 220;
+      if (x > 40 && x < 60) {
+        pixels[p] = 30;
+        pixels[p + 1] = 140;
+        pixels[p + 2] = 70;
+        mask[index] = 255;
+      }
+    }
+  assert.equal(lostProductDetail(pixels, mask, width, height), false);
 });
 
 test('resize preserves aspect ratio and never upscales', () => {

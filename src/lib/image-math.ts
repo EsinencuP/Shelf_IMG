@@ -120,6 +120,48 @@ export function compositeWhite(
   return result;
 }
 
+/** Reject severe loss of visible ink/color when a clean white border supplies a reference. */
+export function lostProductDetail(
+  rgba: Uint8ClampedArray,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+): boolean {
+  if (rgba.length !== width * height * 4 || mask.length !== width * height)
+    throw new Error('Размер маски не совпадает с изображением.');
+  const white = (index: number) => {
+    const p = index * 4,
+      min = Math.min(rgba[p], rgba[p + 1], rgba[p + 2]);
+    return min >= 238 && Math.max(rgba[p], rgba[p + 1], rgba[p + 2]) - min <= 18;
+  };
+  let border = 0,
+    whiteBorder = 0;
+  for (let x = 0; x < width; x++)
+    for (const index of [x, (height - 1) * width + x]) {
+      border++;
+      if (white(index)) whiteBorder++;
+    }
+  for (let y = 1; y < height - 1; y++)
+    for (const index of [y * width, y * width + width - 1]) {
+      border++;
+      if (white(index)) whiteBorder++;
+    }
+  if (!border || whiteBorder / border < 0.9) return false;
+  let detail = 0,
+    retained = 0;
+  for (let index = 0; index < mask.length; index++) {
+    const p = index * 4,
+      min = Math.min(rgba[p], rgba[p + 1], rgba[p + 2]);
+    const max = Math.max(rgba[p], rgba[p + 1], rgba[p + 2]);
+    // Strong color/ink excludes near-white packaging and light neutral shadows.
+    if (min < 150 || (min < 210 && max - min > 25)) {
+      detail++;
+      if (mask[index] >= 128) retained++;
+    }
+  }
+  return detail >= mask.length * 0.005 && retained / detail < 0.6;
+}
+
 /** Flood only near-white background connected to an image border; enclosed white stays. */
 export function whiteBackgroundMask(
   rgba: Uint8ClampedArray,

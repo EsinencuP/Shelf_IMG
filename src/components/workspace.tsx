@@ -33,13 +33,23 @@ import type {
   ProductRow,
   RowStatus,
   SearchResponse,
+  SearchOptions,
 } from '@/lib/types';
-import { DEFAULT_PROFILE, STATUS_LABELS } from '@/lib/types';
+import { DEFAULT_PROFILE, DEFAULT_SEARCH_OPTIONS, STATUS_LABELS } from '@/lib/types';
+import {
+  DEFAULT_PREFERENCES,
+  readPreferences,
+  savePreferences,
+  processingChanged,
+  type Preferences,
+} from '@/lib/preferences';
+import { REGIONAL_SOURCES, INDEXED_DOMAINS } from '@/lib/search-sources';
 import { parseFile, downloadTemplate } from '@/lib/import';
 import { deleteBatch, listBatches, saveBatch } from '@/lib/storage';
 import { exportBatch } from '@/lib/export';
 import { apiFetch, setAccessPassword } from '@/lib/client-api';
 import ImportDialog from './import-dialog';
+import SingleProductDialog from './single-product-dialog';
 import ReviewPane from './review-pane';
 import BlobImage from './blob-image';
 import Modal from './modal';
@@ -67,6 +77,7 @@ export default function Workspace() {
     accessProtected: false,
   });
   const [imported, setImported] = useState<{ sheet: ParsedSheet; filename: string } | null>(null);
+  const [singleProductOpen, setSingleProductOpen] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -77,6 +88,8 @@ export default function Workspace() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Batch | null>(null);
   const [profile, setProfile] = useState<ExportProfile>(DEFAULT_PROFILE);
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [searchOptions, setSearchOptions] = useState<SearchOptions>(DEFAULT_SEARCH_OPTIONS);
   const [password, setPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [saved, setSaved] = useState(true);
@@ -127,6 +140,10 @@ export default function Workspace() {
 
   useEffect(() => {
     let alive = true;
+    const defaults = readPreferences();
+    setPreferences(defaults);
+    setProfile(defaults.profile);
+    setSearchOptions(defaults.search);
     listBatches()
       .then((items) => {
         if (!alive) return;
@@ -135,6 +152,7 @@ export default function Workspace() {
           batchRef.current = items[0];
           setBatch(items[0]);
           setProfile(items[0].profile);
+          setSearchOptions(items[0].searchOptions ?? DEFAULT_SEARCH_OPTIONS);
         }
       })
       .catch((error) => {
@@ -219,7 +237,11 @@ export default function Workspace() {
     }
   }
 
-  async function createBatch(name: string, importedRows: ProductRow[]) {
+  async function createBatch(
+    name: string,
+    importedRows: ProductRow[],
+    source: 'excel' | 'manual' = 'excel',
+  ) {
     setSwitching(true);
     try {
       await persistCurrent();
@@ -232,10 +254,13 @@ export default function Workspace() {
           inputWarnings: [...row.qualityWarnings],
           qualityWarnings: [],
         })),
-        profile,
+        profile: preferences.profile,
+        searchOptions: preferences.search,
       };
       await saveBatch(next);
       changeBatch(next);
+      setProfile(next.profile);
+      setSearchOptions(next.searchOptions!);
       setImported(null);
       setActiveId(null);
       setSelected(new Set());
@@ -243,7 +268,11 @@ export default function Workspace() {
       setQuery('');
       setTab('workspace');
       setHistory((items) => [next, ...items.filter((item) => item.id !== next.id)]);
-      notify(`Импортировано ${importedRows.length} товарных позиций.`);
+      notify(
+        source === 'manual'
+          ? 'Артикул добавлен. Начинаем поиск фотографий.'
+          : `Импортировано ${importedRows.length} товарных позиций.`,
+      );
     } finally {
       setSwitching(false);
     }
@@ -262,6 +291,13 @@ export default function Workspace() {
       );
       return;
     }
+    await runSearch(targets);
+  }
+
+  async function runSearch(
+    targets: ProductRow[],
+    options = batchRef.current?.searchOptions ?? DEFAULT_SEARCH_OPTIONS,
+  ) {
     stopRef.current = false;
     setOperation({ kind: 'search', total: targets.length, done: 0, message: 'Запускаем поиск…' });
     let completed = 0;
@@ -289,6 +325,7 @@ export default function Workspace() {
               nameRo: row.nameRo,
               brand: row.brand,
               quantity: row.quantity,
+              searchOptions: options,
             }),
             signal: controller.signal,
           });
@@ -297,6 +334,8 @@ export default function Workspace() {
             candidates: result.candidates,
             status: result.candidates.length ? 'review' : 'not_found',
             qualityWarnings: result.warnings,
+            searchDiagnostics: result.diagnostics,
+            lastSearchOptions: { ...options },
             selectedCandidateId: undefined,
             confirmed: false,
           });
@@ -349,15 +388,26 @@ export default function Workspace() {
       const { processImage } = await import('@/lib/image-processing');
       for (const row of targets) {
         if (stopRef.current) break;
-        patchRow(row.id, { status: 'processing', error: undefined });
+        patchRow(row.id, {
+          status: 'processing',
+          error: undefined,
+          outputBlob: undefined,
+          outputWidth: undefined,
+          outputHeight: undefined,
+          processingMethod: undefined,
+          confirmed: false,
+        });
         try {
-          const result = await processImage(row.originalBlob!, batch.profile, (message) =>
-            setOperation({
-              kind: 'process',
-              total: targets.length,
-              done: completed,
-              message: `${row.sku} · ${message}`,
-            }),
+          const result = await processImage(
+            row.originalBlob!,
+            { ...batch.profile, method: row.processingOverride ?? batch.profile.method },
+            (message) =>
+              setOperation({
+                kind: 'process',
+                total: targets.length,
+                done: completed,
+                message: `${row.sku} · ${message}`,
+              }),
           );
           patchRow(row.id, {
             status: 'review',
@@ -411,6 +461,7 @@ export default function Workspace() {
       const latest = (await listBatches()).find((value) => value.id === item.id) || item;
       changeBatch(latest);
       setProfile(latest.profile);
+      setSearchOptions(latest.searchOptions ?? DEFAULT_SEARCH_OPTIONS);
       setActiveId(null);
       setSelected(new Set());
       setQuery('');
@@ -424,7 +475,66 @@ export default function Workspace() {
   }
   function updateProfile(next: ExportProfile) {
     setProfile(next);
-    if (batchRef.current) changeBatch({ ...batchRef.current, profile: next });
+    rememberPreferences({ ...preferences, profile: next });
+    const current = batchRef.current;
+    if (current) {
+      const changed = processingChanged(current.profile, next);
+      const invalidated = changed && current.rows.some((row) => row.outputBlob);
+      changeBatch({
+        ...current,
+        profile: next,
+        rows: current.rows.map((row) => {
+          const nextRow = {
+            ...row,
+            processingOverride:
+              current.profile.method !== next.method ? undefined : row.processingOverride,
+          };
+          return changed && row.outputBlob
+            ? {
+                ...nextRow,
+                outputBlob: undefined,
+                outputWidth: undefined,
+                outputHeight: undefined,
+                processingMethod: undefined,
+                confirmed: false,
+                status: 'review',
+                error: undefined,
+              }
+            : nextRow;
+        }),
+      });
+      if (invalidated)
+        notify(
+          'Параметры JPG изменены. Исходники сохранены; подготовьте фото заново и подтвердите результат.',
+        );
+    }
+  }
+  function rememberPreferences(next: Preferences) {
+    setPreferences(next);
+    try {
+      savePreferences(next);
+    } catch {
+      notify(
+        'Настройки действуют сейчас, но браузер не разрешил сохранить их для следующего запуска.',
+        true,
+      );
+    }
+  }
+  function updateSearchOptions(next: SearchOptions) {
+    setSearchOptions(next);
+    rememberPreferences({ ...preferences, search: next });
+    if (batchRef.current) changeBatch({ ...batchRef.current, searchOptions: next });
+  }
+  function nextReview() {
+    const current = batchRef.current;
+    if (!current) return;
+    const index = current.rows.findIndex((row) => row.id === activeId);
+    const ordered = [...current.rows.slice(index + 1), ...current.rows.slice(0, index)];
+    const next =
+      ordered.find((row) => row.status === 'review') ??
+      ordered.find((row) => row.status !== 'ready');
+    if (next) setActiveId(next.id);
+    else notify('Остальные позиции подтверждены. Можно скачать ZIP.');
   }
 
   return (
@@ -537,14 +647,24 @@ export default function Workspace() {
               </p>
             </div>
             {tab !== 'sources' && (
-              <button
-                className="button primary"
-                disabled={busy || loadingFile}
-                onClick={() => fileRef.current?.click()}
-              >
-                <Plus size={18} />
-                Новая партия
-              </button>
+              <div className="page-heading-actions">
+                <button
+                  className="button secondary"
+                  disabled={busy || loadingFile || !loaded}
+                  onClick={() => setSingleProductOpen(true)}
+                >
+                  <Search size={17} />
+                  Один артикул
+                </button>
+                <button
+                  className="button primary"
+                  disabled={busy || loadingFile}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Plus size={18} />
+                  Новая партия
+                </button>
+              </div>
             )}
           </div>
 
@@ -552,7 +672,7 @@ export default function Workspace() {
             <>
               <div className="workflow-strip" aria-label="Этапы работы">
                 {[
-                  ['01', 'Загрузить Excel', FileSpreadsheet],
+                  ['01', 'Добавить товары', FileSpreadsheet],
                   ['02', 'Найти и проверить', Search],
                   ['03', 'Подготовить JPG', ImageIcon],
                   ['04', 'Скачать ZIP', ArrowDownToLine],
@@ -617,6 +737,14 @@ export default function Workspace() {
                       {loadingFile ? 'Читаем таблицу…' : 'Загрузить Excel'}
                     </button>
                     <span className="file-hint">XLSX или CSV · до 10 МБ · до 500 позиций</span>
+                    <button
+                      className="text-button single-product-shortcut"
+                      disabled={loadingFile || !loaded}
+                      onClick={() => setSingleProductOpen(true)}
+                    >
+                      Ввести один артикул без Excel
+                      <ArrowRight size={14} />
+                    </button>
                   </div>
                   <div className="template-row">
                     <div className="template-icon">
@@ -690,8 +818,9 @@ export default function Workspace() {
                     <div className="source-notice">
                       <Globe size={17} />
                       <p>
-                        Без ключа доступен поиск продуктов питания по EAN в Open Food Facts. Для
-                        других категорий добавьте фото или подключите общий поиск.
+                        {searchOptions.mode === 'moldova'
+                          ? 'Режим «Молдова»: местные каталоги и Open Food Facts по EAN. Для большего охвата расширьте поиск в настройках или карточке SKU.'
+                          : 'Рынок: Молдова. Работают прямые каталоги магазинов и производителей, региональные источники и базы EAN. Общий веб-поиск Brave пока не подключён.'}
                       </p>
                       <button className="text-button" onClick={() => setTab('sources')}>
                         Источники
@@ -729,6 +858,32 @@ export default function Workspace() {
                       {exporting ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
                       Скачать ZIP<span className="button-count">{ready}</span>
                     </button>
+                  </div>
+                  <div className="batch-search-controls">
+                    <span>
+                      Поиск:{' '}
+                      <strong>
+                        {searchOptions.mode === 'moldova' ? 'Молдова · быстрее' : 'Расширенный'}
+                      </strong>
+                    </span>
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() => setSettingsOpen(true)}
+                    >
+                      Изменить параметры
+                    </button>
+                    {review > 0 && (
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => {
+                          setActiveId(rows.find((row) => row.status === 'review')!.id);
+                        }}
+                      >
+                        Проверить фотографии ({review}) <ArrowRight size={14} />
+                      </button>
+                    )}
                   </div>
                   {operation && (
                     <div className="operation-bar" role="status">
@@ -917,6 +1072,18 @@ export default function Workspace() {
                         onPatch={patchRow}
                         onClose={() => setActiveId(null)}
                         onNotice={notify}
+                        onNext={
+                          rows.some((row) => row.id !== activeRow.id && row.status !== 'ready')
+                            ? nextReview
+                            : undefined
+                        }
+                        onSearch={(expanded) =>
+                          void runSearch(
+                            [activeRow],
+                            expanded ? { ...searchOptions, mode: 'expanded' } : searchOptions,
+                          )
+                        }
+                        searchMode={searchOptions.mode}
                       />
                     )}
                   </div>
@@ -996,8 +1163,18 @@ export default function Workspace() {
                   type="БЕСПЛАТНЫЙ КАТАЛОГ"
                   status={config.serverReady === false ? 'Нужна настройка доступа' : 'Доступен'}
                   enabled={config.serverReady !== false}
-                  description="Фотографии продуктов питания по точному EAN. Каталог не охватывает все категории и рынки; результат нужно проверить."
+                  description="Фотографии по EAN: Open Food Facts, Open Beauty Facts, Open Products Facts и Open Pet Food Facts. Покрытие каталогов различается; результат нужно проверить."
                   detail="Авторство и лицензия CC BY-SA сохраняются в отчёте."
+                />
+                <SourceCard
+                  name="UPCitemdb"
+                  type="ДОПОЛНИТЕЛЬНАЯ БАЗА ШТРИХКОДОВ"
+                  status={
+                    config.serverReady === false ? 'Нужна настройка доступа' : 'Без API-ключа'
+                  }
+                  enabled={config.serverReady !== false}
+                  description="Дополнительная международная база EAN/UPC для товаров разных категорий. Фотографии сохраняют исходные ограничения использования."
+                  detail="Бесплатный тариф: до 100 запросов в день, ограничение частоты. Платный переход отсутствует."
                 />
                 <SourceCard
                   name="Brave Search"
@@ -1016,6 +1193,44 @@ export default function Workspace() {
                   detail="Подключение: GEMINI_API_KEY. Доступность бесплатной квоты зависит от проекта и условий Google."
                 />
               </div>
+              <section className="regional-source-panel">
+                <div className="section-label">
+                  <h2>Прямые источники: Молдова и регион</h2>
+                  <span>Поиск RU / RO и EAN</span>
+                </div>
+                <div className="regional-source-list">
+                  {REGIONAL_SOURCES.map((source) => (
+                    <div key={source.id}>
+                      <strong>{source.name}</strong>
+                      <a
+                        href={`https://${source.domain}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {source.domain}
+                      </a>
+                      <span>{source.region}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="muted small">
+                  Для этих источников ключ общего поискового API не требуется. Блокировки, изменения
+                  сайта и отсутствие товара отображаются в диагностике конкретного поиска.
+                </p>
+              </section>
+              <section className="regional-source-panel">
+                <h2>Производители и дополнительные площадки</h2>
+                <p className="muted small">
+                  При подключённом Brave запросы расширяются на оба языка и домены Молдовы, России,
+                  Беларуси, Украины и Румынии. Следующие домены — ориентиры поиска по индексу,
+                  отдельный прямой коннектор к каждому из них не заявляется.
+                </p>
+                <div className="indexed-source-tags">
+                  {INDEXED_DOMAINS.map((domain) => (
+                    <span key={domain}>{domain}</span>
+                  ))}
+                </div>
+              </section>
               <div className="source-policy">
                 <ShieldCheck size={24} />
                 <div>
@@ -1044,62 +1259,155 @@ export default function Workspace() {
           onImport={createBatch}
         />
       )}
+      {singleProductOpen && (
+        <SingleProductDialog
+          onClose={() => setSingleProductOpen(false)}
+          onCreate={async (row) => {
+            await createBatch(`Артикул ${row.sku}`, [row], 'manual');
+            setSingleProductOpen(false);
+            setActiveId(row.id);
+            await runSearch([row]);
+          }}
+        />
+      )}
       {settingsOpen && (
-        <Modal title="Параметры подготовки" onClose={() => setSettingsOpen(false)}>
+        <Modal title="Параметры подготовки" wide onClose={() => setSettingsOpen(false)}>
           <p className="muted">
-            Профиль для Shelf: непрозрачный JPG на белом фоне, обрезка по границам товара.
+            Настройки применяются к текущей партии и запоминаются для новых. В сохранённых партиях
+            остаются их собственные параметры.
           </p>
-          <div className="settings-fields">
-            <label>
-              Имена файлов
-              <select
-                value={profile.naming}
-                onChange={(event) =>
-                  updateProfile({
-                    ...profile,
-                    naming: event.target.value as ExportProfile['naming'],
-                  })
-                }
-              >
-                <option value="sku">По SKU</option>
-                <option value="internalCode">По внутреннему коду (при отсутствии — SKU)</option>
-              </select>
-            </label>
-            <label>
-              Максимальная длинная сторона
-              <select
-                value={profile.maxSide}
-                onChange={(event) =>
-                  updateProfile({ ...profile, maxSide: Number(event.target.value) })
-                }
-              >
-                <option value={1200}>1200 px</option>
-                <option value={1600}>1600 px</option>
-                <option value={2400}>2400 px</option>
-              </select>
-            </label>
-            <label>
-              Обработка фона
-              <select
-                value={profile.method}
-                onChange={(event) =>
-                  updateProfile({
-                    ...profile,
-                    method: event.target.value as ExportProfile['method'],
-                  })
-                }
-              >
-                <option value="ai">Локальная нейросеть U²-Net — без токенов</option>
-                <option value="white">Обрезка светлого фона — без модели</option>
-              </select>
-            </label>
-          </div>
-          <div className="notice-inline">
-            <ImageIcon size={17} />
-            <span>
-              Размеры не увеличиваются искусственно. Изменение профиля применяется при следующей
-              обработке фото.
-            </span>
+          <div className="settings-grid">
+            <section aria-label="Настройки поиска">
+              <h3 className="settings-section-heading">Поиск фотографий</h3>
+              <div className="settings-fields">
+                <label>
+                  Режим поиска
+                  <select
+                    value={searchOptions.mode}
+                    onChange={(event) =>
+                      updateSearchOptions({
+                        ...searchOptions,
+                        mode: event.target.value as SearchOptions['mode'],
+                      })
+                    }
+                  >
+                    <option value="expanded">Расширенный — все подключённые каталоги</option>
+                    <option value="moldova">Молдова — меньше запросов и ожидания</option>
+                  </select>
+                </label>
+                <p className="muted small">
+                  {searchOptions.mode === 'moldova'
+                    ? 'METRO Moldova, Bonus, Linella, Bucuria и Open Food Facts по EAN. Для сложных SKU можно отдельно расширить поиск в карточке.'
+                    : 'Молдова, региональные магазины, дополнительные базы EAN и веб-поиск, если он подключён.'}
+                </p>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={searchOptions.useWeb}
+                    disabled={searchOptions.mode === 'moldova'}
+                    onChange={(event) =>
+                      updateSearchOptions({ ...searchOptions, useWeb: event.target.checked })
+                    }
+                  />
+                  <span>Использовать веб-поиск Brave в расширенном режиме</span>
+                </label>
+                <label>
+                  Лимит веб-запросов на SKU
+                  <select
+                    value={searchOptions.webQueryLimit}
+                    disabled={searchOptions.mode === 'moldova' || !searchOptions.useWeb}
+                    onChange={(event) =>
+                      updateSearchOptions({
+                        ...searchOptions,
+                        webQueryLimit: Number(event.target.value),
+                      })
+                    }
+                  >
+                    <option value={1}>1 запрос · экономный</option>
+                    <option value={2}>2 запроса</option>
+                    <option value={4}>4 запроса · полный</option>
+                    <option value={6}>6 запросов</option>
+                  </select>
+                </label>
+                <p className="muted small">
+                  Каждый запрос: до 2 вызовов Brave (изображения и страницы). Сервер может
+                  ограничить лимит ниже.{' '}
+                  {config.braveConfigured
+                    ? 'Brave подключён; учитывайте квоту вашего API.'
+                    : 'Ключ Brave не задан: вызовов этого API сейчас нет.'}{' '}
+                  Gemini запускается только кнопкой в карточке.
+                </p>
+              </div>
+            </section>
+            <section aria-label="Настройки JPG">
+              <h3 className="settings-section-heading">JPG для Shelf</h3>
+              <div className="settings-fields">
+                <label>
+                  Имена файлов
+                  <select
+                    value={profile.naming}
+                    onChange={(event) =>
+                      updateProfile({
+                        ...profile,
+                        naming: event.target.value as ExportProfile['naming'],
+                      })
+                    }
+                  >
+                    <option value="sku">По SKU</option>
+                    <option value="internalCode">По внутреннему коду (при отсутствии — SKU)</option>
+                  </select>
+                </label>
+                <label>
+                  Максимальная длинная сторона
+                  <select
+                    value={profile.maxSide}
+                    onChange={(event) =>
+                      updateProfile({ ...profile, maxSide: Number(event.target.value) })
+                    }
+                  >
+                    <option value={1200}>1200 px</option>
+                    <option value={1600}>1600 px</option>
+                    <option value={2400}>2400 px</option>
+                  </select>
+                </label>
+                <label>
+                  Качество JPEG
+                  <select
+                    value={profile.quality}
+                    onChange={(event) =>
+                      updateProfile({ ...profile, quality: Number(event.target.value) })
+                    }
+                  >
+                    <option value={0.9}>90% · меньше размер файлов</option>
+                    <option value={0.95}>95% · рекомендуется</option>
+                    <option value={1}>100% · больше размер файлов</option>
+                  </select>
+                </label>
+                <label>
+                  Обработка фона
+                  <select
+                    value={profile.method}
+                    onChange={(event) =>
+                      updateProfile({
+                        ...profile,
+                        method: event.target.value as ExportProfile['method'],
+                      })
+                    }
+                  >
+                    <option value="ai">Локальная нейросеть U²-Net — без токенов</option>
+                    <option value="white">Обрезка светлого фона — без модели</option>
+                  </select>
+                </label>
+              </div>
+              <div className="notice-inline">
+                <ImageIcon size={17} />
+                <span>
+                  Белый фон, прямоугольная обрезка по товару, пропорции сохраняются. Размеры не
+                  увеличиваются искусственно. При смене размера, качества или метода готовые JPG
+                  нужно подготовить и подтвердить заново; исходники сохраняются.
+                </span>
+              </div>
+            </section>
           </div>
           <div className="settings-access">
             <h3>Доступ к серверу</h3>
@@ -1152,14 +1460,18 @@ export default function Workspace() {
         <Modal title="Как работает Shelf Studio" onClose={() => setHelpOpen(false)}>
           <ol className="help-list">
             <li>
-              <strong>Загрузите Excel или CSV.</strong>
-              <p>Проверьте колонки SKU, EAN, названия и габариты в миллиметрах.</p>
+              <strong>Добавьте товары.</strong>
+              <p>
+                Загрузите Excel/CSV или откройте «Один артикул». Укажите SKU, EAN или название, по
+                возможности бренд и фасовку. Габариты — в миллиметрах.
+              </p>
             </li>
             <li>
               <strong>Запустите поиск.</strong>
               <p>
-                Откройте карточку товара и выберите фотографию. Можно добавить своё фото или
-                HTTPS-ссылку.
+                Режим «Молдова» сокращает число источников; расширенный охватывает всю подключённую
+                базу. Для выбранного SKU поиск можно расширить отдельно. Откройте карточку и
+                выберите фото; можно загрузить собственное или добавить HTTPS-ссылку.
               </p>
             </li>
             <li>
@@ -1172,7 +1484,9 @@ export default function Workspace() {
             <li>
               <strong>Проверьте и скачайте.</strong>
               <p>
-                Подтвердите SKU и права. ZIP содержит JPG, отчёт Excel и сведения об источниках.
+                Проверьте этикетку, фасовку, крышку и дно. Подтвердите SKU и права, затем перейдите
+                к следующей позиции кнопкой «Подтвердить и перейти дальше». ZIP содержит JPG, отчёт
+                Excel и сведения об источниках.
               </p>
             </li>
           </ol>

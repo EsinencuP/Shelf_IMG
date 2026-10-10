@@ -40,9 +40,12 @@ export interface ProductRow {
   confirmed?: boolean;
   rightsConfirmed?: boolean;
   processingMethod?: string;
+  processingOverride?: 'ai' | 'white';
   inputWarnings?: string[];
   vision?: VisionResult;
   qualityWarnings: string[];
+  searchDiagnostics?: SearchDiagnostic[];
+  lastSearchOptions?: SearchOptions;
   error?: string;
 }
 
@@ -60,7 +63,20 @@ export interface Batch {
   createdAt: string;
   rows: ProductRow[];
   profile: ExportProfile;
+  searchOptions?: SearchOptions;
 }
+
+export interface SearchOptions {
+  mode: 'moldova' | 'expanded';
+  useWeb: boolean;
+  webQueryLimit: number;
+}
+
+export const DEFAULT_SEARCH_OPTIONS: SearchOptions = {
+  mode: 'expanded',
+  useWeb: true,
+  webQueryLimit: 4,
+};
 
 export type ImportField =
   | 'sku'
@@ -83,6 +99,16 @@ export interface ParsedSheet {
 export interface SearchResponse {
   candidates: Candidate[];
   warnings: string[];
+  diagnostics?: SearchDiagnostic[];
+}
+export interface SearchDiagnostic {
+  id: string;
+  source: string;
+  status: 'ok' | 'unavailable' | 'skipped' | 'not_configured';
+  count: number;
+  elapsedMs: number;
+  requests?: number;
+  message?: string;
 }
 export interface AppConfig {
   braveConfigured: boolean;

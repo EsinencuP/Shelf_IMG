@@ -9,6 +9,7 @@ import {
   resizeMask,
   u2netInput,
   whiteBackgroundMask,
+  lostProductDetail,
 } from './image-math';
 
 const MODEL_SHA256 = '309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8';
@@ -166,6 +167,10 @@ export async function processImage(
       );
     } else {
       mask = await aiMask(source, width, height, warnings, progress);
+      if (lostProductDetail(rgba, mask, width, height))
+        throw new Error(
+          'Нейросеть удалила значительную часть рисунка или упаковки на белом фоне. Результат отклонён. Выберите обрезку светлого фона для этой фотографии или другой исходник.',
+        );
       method = 'u2netp';
     }
     const bounds = maskBounds(mask, width, height);

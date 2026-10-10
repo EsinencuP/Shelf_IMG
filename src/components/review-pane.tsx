@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -10,6 +10,8 @@ import {
   Loader2,
   ScanLine,
   X,
+  ArrowRight,
+  Search,
 } from 'lucide-react';
 import type { Candidate, ExportProfile, ProductRow, VisionResult } from '@/lib/types';
 import { apiFetch } from '@/lib/client-api';
@@ -25,6 +27,9 @@ export default function ReviewPane({
   onNotice,
   disabled,
   onBusy,
+  onNext,
+  onSearch,
+  searchMode,
 }: {
   row: ProductRow;
   profile: ExportProfile;
@@ -34,12 +39,17 @@ export default function ReviewPane({
   onClose: () => void;
   onNotice: (message: string, error?: boolean) => void;
   onBusy: (busy: boolean) => void;
+  onNext?: () => void;
+  onSearch: (expanded: boolean) => void;
+  searchMode: 'moldova' | 'expanded';
 }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [url, setUrl] = useState('');
+  const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     setUrl('');
+    headingRef.current?.focus({ preventScroll: false });
   }, [row.id]);
   const vision = row.vision;
   function working(value: boolean) {
@@ -67,6 +77,7 @@ export default function ReviewPane({
         error: undefined,
         qualityWarnings: [],
         vision: undefined,
+        processingOverride: undefined,
       });
     } catch (error) {
       onNotice(error instanceof Error ? error.message : 'Не удалось загрузить фотографию.', true);
@@ -106,6 +117,7 @@ export default function ReviewPane({
       error: undefined,
       qualityWarnings: [],
       vision: undefined,
+      processingOverride: undefined,
     });
   }
 
@@ -138,6 +150,7 @@ export default function ReviewPane({
         error: undefined,
         qualityWarnings: [],
         vision: undefined,
+        processingOverride: undefined,
       });
       setUrl('');
     } catch (error) {
@@ -152,10 +165,22 @@ export default function ReviewPane({
     if (!row.originalBlob) return;
     working(true);
     setProgress('Подготавливаем изображение…');
-    patch({ status: 'processing', error: undefined });
+    patch({
+      status: 'processing',
+      error: undefined,
+      outputBlob: undefined,
+      outputWidth: undefined,
+      outputHeight: undefined,
+      processingMethod: undefined,
+      confirmed: false,
+    });
     try {
       const { processImage } = await import('@/lib/image-processing');
-      const result = await processImage(row.originalBlob, profile, setProgress);
+      const result = await processImage(
+        row.originalBlob,
+        { ...profile, method: row.processingOverride ?? profile.method },
+        setProgress,
+      );
       patch({
         outputBlob: result.blob,
         outputWidth: result.width,
@@ -220,7 +245,9 @@ export default function ReviewPane({
       <div className="review-heading">
         <div>
           <span className="eyebrow">ПРОВЕРКА ТОВАРА</span>
-          <h2>{row.sku}</h2>
+          <h2 ref={headingRef} tabIndex={-1}>
+            {row.sku}
+          </h2>
         </div>
         <button
           className="icon-button"
@@ -231,6 +258,11 @@ export default function ReviewPane({
           <X size={19} />
         </button>
       </div>
+      {onNext && (
+        <button className="text-button review-next" disabled={locked} onClick={onNext}>
+          Следующий SKU <ArrowRight size={14} />
+        </button>
+      )}
       <p className="review-name">{row.nameRu || row.nameRo}</p>
       {row.nameRu && row.nameRo && <p className="muted small">{row.nameRo}</p>}
       <div className="product-attributes">
@@ -271,8 +303,50 @@ export default function ReviewPane({
         </div>
       )}
 
+      {
+        <details className="search-diagnostics" hidden={!row.searchDiagnostics?.length}>
+          <summary>
+            Поиск по источникам (
+            {row.searchDiagnostics?.filter(
+              (item) => item.status === 'ok' || item.status === 'unavailable',
+            ).length ?? 0}{' '}
+            проверено)
+          </summary>
+          <ul>
+            {row.searchDiagnostics?.map((source) => (
+              <li key={source.id}>
+                <span>{source.source}</span>
+                <strong>
+                  {source.status === 'ok'
+                    ? `${source.count} фото`
+                    : source.status === 'not_configured'
+                      ? 'Нет ключа'
+                      : source.status === 'skipped'
+                        ? source.message?.includes('Отключён') ||
+                          source.message?.includes('выключен')
+                          ? 'Отключён'
+                          : 'Не требуется'
+                        : 'Недоступен'}
+                </strong>
+                {source.message && <small>{source.message}</small>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      }
       {!row.originalBlob && (
         <>
+          <div className="review-actions">
+            <button className="button secondary" disabled={locked} onClick={() => onSearch(false)}>
+              <Search size={15} />
+              {row.searchDiagnostics?.length ? 'Повторить поиск' : 'Найти фотографии'}
+            </button>
+            {searchMode === 'moldova' && (
+              <button className="text-button" disabled={locked} onClick={() => onSearch(true)}>
+                Расширить поиск для SKU
+              </button>
+            )}
+          </div>
           <div className="section-label">
             <h3>Найденные фотографии</h3>
             <span>{row.candidates.length}</span>
@@ -354,7 +428,7 @@ export default function ReviewPane({
             </div>
           ) : null}
           <div className="review-actions">
-            <button className="button secondary" disabled={locked} onClick={process}>
+            <button className="button secondary" disabled={locked} onClick={() => process()}>
               <ScanLine size={16} />
               {row.outputBlob ? 'Обработать снова' : 'Подготовить JPG'}
             </button>
@@ -364,6 +438,31 @@ export default function ReviewPane({
               </button>
             )}
           </div>
+          <label className="photo-method">
+            Обработка этой фотографии
+            <select
+              value={row.processingOverride ?? ''}
+              disabled={locked}
+              onChange={(event) =>
+                patch({
+                  processingOverride: event.target.value
+                    ? (event.target.value as ExportProfile['method'])
+                    : undefined,
+                  outputBlob: undefined,
+                  outputWidth: undefined,
+                  outputHeight: undefined,
+                  processingMethod: undefined,
+                  confirmed: false,
+                  status: 'review',
+                  error: undefined,
+                })
+              }
+            >
+              <option value="">Как в настройках партии</option>
+              <option value="white">Обрезка светлого фона — сохранить упаковку</option>
+              <option value="ai">Локальная нейросеть</option>
+            </select>
+          </label>
           <button
             className="text-button"
             disabled={locked}
@@ -378,6 +477,7 @@ export default function ReviewPane({
                 qualityWarnings: [],
                 error: undefined,
                 vision: undefined,
+                processingOverride: undefined,
               })
             }
           >
@@ -446,22 +546,42 @@ export default function ReviewPane({
                   </div>
                 </>
               ) : (
-                <button
-                  className="button primary full"
-                  disabled={
-                    locked ||
-                    !validIdentity ||
-                    !row.rightsConfirmed ||
-                    vision?.verdict === 'conflict'
-                  }
-                  onClick={() => {
-                    patch({ status: 'ready', confirmed: true });
-                    onNotice('Изображение подтверждено и добавлено в экспорт.');
-                  }}
-                >
-                  <Check size={17} />
-                  Подтвердить для экспорта
-                </button>
+                <>
+                  <button
+                    className="button primary full"
+                    disabled={
+                      locked ||
+                      !validIdentity ||
+                      !row.rightsConfirmed ||
+                      vision?.verdict === 'conflict'
+                    }
+                    onClick={() => {
+                      patch({ status: 'ready', confirmed: true });
+                      onNotice('Изображение подтверждено и добавлено в экспорт.');
+                    }}
+                  >
+                    <Check size={17} />
+                    Подтвердить для экспорта
+                  </button>
+                  {onNext && (
+                    <button
+                      className="button secondary full"
+                      disabled={
+                        locked ||
+                        !validIdentity ||
+                        !row.rightsConfirmed ||
+                        vision?.verdict === 'conflict'
+                      }
+                      onClick={() => {
+                        patch({ status: 'ready', confirmed: true });
+                        onNext();
+                        onNotice('Изображение подтверждено. Открыт следующий SKU.');
+                      }}
+                    >
+                      Подтвердить и перейти дальше <ArrowRight size={16} />
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}

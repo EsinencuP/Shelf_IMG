@@ -18,6 +18,12 @@ import { GET as imageGet } from '../src/app/api/image/route';
 import { GET as configGet } from '../src/app/api/config/route';
 import { GET as sessionGet } from '../src/app/api/session/route';
 import { POST as searchPost } from '../src/app/api/search/route';
+vi.mock('../src/lib/server/regional-search', () => ({
+  searchRegionalSources: vi.fn(async () => ({ candidates: [], diagnostics: [] })),
+}));
+vi.mock('../src/lib/server/supplemental-search', () => ({
+  searchSupplementalCatalogs: vi.fn(async () => ({ candidates: [], diagnostics: [] })),
+}));
 
 const product = {
   ean: '3017620422003',
@@ -396,8 +402,9 @@ describe('matching and source evidence', () => {
     );
     await expect(searchProducts(product)).rejects.toMatchObject({ status: 502 });
   });
-  it('keeps image candidates when the independent web endpoint fails and makes only two calls', async () => {
+  it('keeps image candidates when web fails and respects the configured query budget', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'server-only-key');
+    vi.stubEnv('SEARCH_MAX_WEB_QUERIES', '1');
     const fetcher = vi.fn(async (url: string) =>
       url.includes('/images/search')
         ? Response.json({

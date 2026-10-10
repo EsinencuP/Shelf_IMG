@@ -1,5 +1,6 @@
 import type { Batch, ProductRow } from './types';
 import { STATUS_LABELS } from './types';
+import { DEFAULT_SEARCH_OPTIONS } from './types';
 
 /** Makes a single Windows-safe stem without inventing a SKU. */
 export function safeFileStem(value: string): string {
@@ -101,7 +102,10 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
       imageWidthPx: row.outputWidth ?? null,
       imageHeightPx: row.outputHeight ?? null,
       processingMethod: row.processingMethod ?? null,
+      processingOverride: row.processingOverride ?? null,
       vision: row.vision ?? null,
+      searchDiagnostics: row.searchDiagnostics ?? [],
+      searchOptions: row.lastSearchOptions ?? null,
       selectedCandidateId: row.selectedCandidateId ?? null,
       candidates: row.candidates.map((item) => ({
         id: item.id,
@@ -149,6 +153,7 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
     createdAt: batch.createdAt,
     exportedAt: new Date().toISOString(),
     profile: batch.profile,
+    searchOptions: batch.searchOptions ?? DEFAULT_SEARCH_OPTIONS,
     totalRows: batch.rows.length,
     exportedImages: manifestRows.filter((row) => row.exported).length,
     rows: manifestRows,

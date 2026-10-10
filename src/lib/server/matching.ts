@@ -1,13 +1,25 @@
 import type { Candidate } from '../types';
 import { normalizeGtin, type SearchProduct } from './validation';
+import { canonicalText } from './search-queries';
 
-const normalize = (value: string) =>
-  value
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+const normalize = canonicalText;
+const FLAVORS = [
+  /strawberry|capsun|klubnik|polunic/,
+  /cherry|visin|vishn|cireas/,
+  /vanill|vanil/,
+  /chocolat|ciocolat|shokolad|cacao|kakao|cocoa/,
+  /peach|piersic|persik/,
+  /apricot|cais|abrikos/,
+  /orange|portocal|apelsin/,
+  /lemon|lamaie|limon/,
+  /banana|banan/,
+  /oreh|orekhov|nuci|hazelnut|almond|migdale|alun|(?:^| )nuts?(?: |$)/,
+];
+function percentages(value: string): number[] {
+  return [...value.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((match) =>
+    Number(match[1].replace(',', '.')),
+  );
+}
 
 export interface ParsedQuantity {
   amount: number;
@@ -69,6 +81,28 @@ export function matchCandidate(
       rejected = true;
     }
   } else if (expectedQuantity) warnings.push('Объём и количество упаковок не подтверждены.');
+  const expectedText = `${product.nameRu} ${product.nameRo}`,
+    actualText = candidate.title;
+  const expectedPercent = percentages(expectedText),
+    actualPercent = percentages(actualText);
+  if (
+    expectedPercent.length &&
+    actualPercent.length &&
+    !expectedPercent.some((value) => actualPercent.includes(value))
+  ) {
+    warnings.push('Жирность или концентрация источника отличается от запрошенной.');
+    rejected = true;
+  }
+  const requestedFlavor = FLAVORS.filter((pattern) => pattern.test(canonicalText(expectedText)));
+  const foundFlavor = FLAVORS.filter((pattern) => pattern.test(canonicalText(actualText)));
+  if (
+    requestedFlavor.length &&
+    foundFlavor.length &&
+    !requestedFlavor.some((pattern) => pattern.test(canonicalText(actualText)))
+  ) {
+    warnings.push('Вкус источника отличается от запрошенного.');
+    rejected = true;
+  }
   warnings.push(
     'Проверьте вкус, вариант и актуальность дизайна упаковки; источник не гарантирует текущую версию.',
   );

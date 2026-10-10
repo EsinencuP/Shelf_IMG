@@ -1,4 +1,21 @@
 import { ApiError } from './http';
+import { DEFAULT_SEARCH_OPTIONS, type SearchOptions } from '../types';
+
+export function validateSearchOptions(input: unknown): SearchOptions {
+  if (input === undefined) return { ...DEFAULT_SEARCH_OPTIONS };
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw new ApiError(422, 'Некорректные параметры поиска.');
+  const record = input as Record<string, unknown>;
+  const { mode = 'expanded', useWeb = true, webQueryLimit = 4 } = record;
+  if (
+    !['moldova', 'expanded'].includes(String(mode)) ||
+    typeof mode !== 'string' ||
+    typeof useWeb !== 'boolean' ||
+    ![1, 2, 4, 6].includes(webQueryLimit as number)
+  )
+    throw new ApiError(422, 'Некорректный режим или лимит поиска.');
+  return { mode: mode as SearchOptions['mode'], useWeb, webQueryLimit: webQueryLimit as number };
+}
 
 export interface SearchProduct {
   ean: string;
