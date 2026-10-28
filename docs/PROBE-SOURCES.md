@@ -1,5 +1,58 @@
 # Проверка источников
 
+## Защищённый endpoint
+
+`GET /api/health/sources` возвращает тот же JSON, что и CLI: `generatedAt`,
+`referenceEans`, `results`. Общая логика находится в `src/lib/server/probe-sources.ts`.
+Endpoint не пишет файлы на сервере и выполняет запросы напрямую с IP среды запуска.
+Ответы не кэшируются (`Cache-Control: no-store`). Ошибка одного источника, например
+HTTP 403, остаётся в его строке; общий HTTP-статус отчёта — 200.
+
+Доступ — HTTP Basic: пользователь `admin`, пароль из `MVP_ACCESS_PASSWORD`.
+Без пароля в настройках endpoint закрыт и в development (503); без корректной
+авторизации возвращается 401. Пароли в URL не принимаются. `HEAD` проверяет
+только доступ и не запускает источники.
+
+Для сравнения с Vercel:
+
+1. Выполните `npm run probe` локально и сохраните `probe-report.json`.
+2. Откройте `https://<deployment>/api/health/sources` в браузере, введите
+   `admin` и пароль через Basic Auth и сохраните JSON. Для Vercel Preview может
+   дополнительно требоваться вход в Vercel из-за защиты развёртывания.
+3. Сопоставьте строки по `source` + `ean`: поле `httpStatus` показывает разницу
+   между локальным и облачным IP, в том числе 403. `not-configured` означает,
+   что переменные сервиса не заданы в этой среде.
+
+В Vercel задайте `MVP_ACCESS_PASSWORD` и нужные переменные источников в выбранной
+среде. Используется Node.js и `maxDuration = 300`; тройная проверка EAN с паузами
+UPCitemdb может занимать больше обычных 30 секунд. Повторные обращения запускают
+новую проверку; одновременно допускается до трёх работ внутри процесса через
+существующий `boundedWork`. На бесплатном Hobby с Fluid Compute доступны
+[300 секунд выполнения](https://vercel.com/docs/functions/configuring-functions/duration).
+Платные сервисы probe не вызывает.
+
+### Живая проверка 28 октября 2026
+
+Проверено тестовое развёртывание Vercel `dpl_2g6KdEh8osXTaxrtdTNJZYJLuPCf`:
+[защищённый endpoint](https://shelf-m5l17pt1h-themrack26-1196s-projects.vercel.app/api/health/sources).
+И локальный сервер, и Vercel вернули HTTP 200 с 31 строкой JSON.
+При сравнении одинаковых трёх EAN получены следующие результаты:
+
+| Источник        | Локально         | Vercel Preview   |
+| --------------- | ---------------- | ---------------- |
+| METRO Moldova   | HTTP 200         | HTTP 403         |
+| Bonus Moldova   | HTTP 200         | HTTP 403         |
+| Linella         | HTTP 403         | HTTP 403         |
+| SearXNG         | `not-configured` | `not-configured` |
+| Tavily `/usage` | HTTP 200         | `not-configured` |
+
+Tavily не настроен в среде Preview; это отдельный статус, а не блокировка IP.
+Полные локальные отчёты и сопоставление сохранены в исключённой из Git папке
+`.runtime/health-sources/`: `local-report.json`, `vercel-report.json`, `comparison.json`.
+Доступность источников и настройки могут измениться после этой проверки.
+
+## CLI
+
 Запуск из корня проекта: `npm run probe` (Node.js 24, зависимости установлены).
 Команда печатает таблицу и перезаписывает `probe-report.json` в текущей папке.
 Отчёт исключён из Git. Ошибки отдельных источников сохраняются в отчёте и не
