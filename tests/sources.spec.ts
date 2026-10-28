@@ -54,7 +54,7 @@ test('Moldova source directory and saved per-source diagnostics are usable', asy
   const details = page.locator('.search-diagnostics');
   await details.locator('summary').click();
   await expect(details.getByText('METRO Moldova', { exact: true })).toBeVisible();
-  await expect(details.getByText('Нет ключа', { exact: true })).toBeVisible();
+  await expect(details.getByText('Нет ключа или адреса сервиса.', { exact: true })).toBeVisible();
   await expect(page.getByText('Сохранено в браузере', { exact: false })).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: 'Открыть DIAGNOSTIC', exact: true }).click();

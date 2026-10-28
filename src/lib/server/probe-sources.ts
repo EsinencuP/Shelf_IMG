@@ -1,3 +1,5 @@
+import type { SourceStatus } from '../types';
+import { sourceFailureDetails, sourceReason, isSourceFailure } from '../source-status';
 import { obj, safeUrl } from './catalog-utils';
 import { readBody } from './http';
 import { USER_AGENT } from './public-fetch';
@@ -14,21 +16,14 @@ import { type SearchProduct } from './validation';
 
 export const REFERENCE_EANS = ['4840053004404', '4600699006831', '3017620422003'] as const;
 const fields = 'code,product_name,brands,quantity,images,selected_images,image_front_url,creator';
-type State =
-  | 'ok'
-  | 'empty'
-  | 'http-error'
-  | 'timeout'
-  | 'network-error'
-  | 'invalid-response'
-  | 'not-configured';
 export interface ProbeRow {
   source: string;
   ean: string | null;
   httpStatus: number | null;
   elapsedMs: number;
   imageCount: number | null;
-  status: State;
+  status: SourceStatus;
+  reason?: string;
   message?: string;
   usage?: Record<string, unknown>;
 }
@@ -206,10 +201,11 @@ export async function probeSources(
           httpStatus: null,
           elapsedMs: 0,
           imageCount: null,
-          status: 'not-configured',
+          status: 'disabled',
         };
         if (source.missing) {
           row.message = source.missing;
+          row.reason = source.missing;
           results.push(row);
           continue;
         }
@@ -220,7 +216,7 @@ export async function probeSources(
           row.httpStatus = response.status;
           if (!response.ok) {
             await response.body?.cancel();
-            row.status = 'http-error';
+            row.status = sourceFailureDetails({ status: response.status }).status;
             row.message = `HTTP ${response.status}`;
           } else {
             parsing = true;
@@ -248,7 +244,7 @@ export async function probeSources(
                   const page = await get(link.url, source);
                   if (!page.ok) {
                     await page.body?.cancel();
-                    row.status = 'http-error';
+                    row.status = sourceFailureDetails({ status: page.status }).status;
                     row.message = `Карточка Bucuria: HTTP ${page.status}`;
                     break;
                   }
@@ -257,8 +253,8 @@ export async function probeSources(
                   images.push(...imagesOf(bucuriaProductCandidates(html, link.url)));
                 }
               }
-              row.imageCount = row.status === 'http-error' ? null : new Set(images).size;
-              if (row.status !== 'http-error') row.status = row.imageCount ? 'ok' : 'empty';
+              row.imageCount = isSourceFailure(row.status) ? null : new Set(images).size;
+              if (!isSourceFailure(row.status)) row.status = row.imageCount ? 'ok' : 'empty';
             }
           }
         } catch (error) {
@@ -266,8 +262,8 @@ export async function probeSources(
             error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)
               ? 'timeout'
               : parsing
-                ? 'invalid-response'
-                : 'network-error';
+                ? 'parse_error'
+                : 'blocked';
           row.message =
             row.status === 'timeout'
               ? 'Превышено время ожидания.'
@@ -275,6 +271,11 @@ export async function probeSources(
                 ? 'Не удалось разобрать ответ источника.'
                 : 'Не удалось выполнить запрос; проверьте сеть и адрес сервиса.';
         }
+        row.reason =
+          row.message ||
+          (source.usage && row.status === 'ok'
+            ? 'Тариф и использование квоты получены; поиск не запускался.'
+            : sourceReason(row.status));
         row.elapsedMs = Date.now() - started;
         results.push(row);
       }

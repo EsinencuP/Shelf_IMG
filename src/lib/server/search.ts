@@ -1,3 +1,6 @@
+import { sourceDiagnostic, sourceFailureDetails, isSourceFailure } from '../source-status';
+import { REGIONAL_SOURCES, OPEN_CATALOGS } from '../search-sources';
+import { WEB_PROVIDER_IDS, WEB_PROVIDER_NAMES } from './web-discovery';
 import { createHash } from 'node:crypto';
 import {
   DEFAULT_SEARCH_OPTIONS,
@@ -11,7 +14,7 @@ import { USER_AGENT, validatePublicUrl } from './public-fetch';
 import { matchCandidate } from './matching';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { searchRegionalSources } from './regional-search';
-import { OPEN_CATALOGS, searchSupplementalCatalogs } from './supplemental-search';
+import { searchSupplementalCatalogs } from './supplemental-search';
 import { configuredWebProviders, searchWebDiscovery } from './web-discovery';
 
 const idFor = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
@@ -50,11 +53,13 @@ async function providerJson(
       response.status === 429 ? 429 : 502,
       response.status === 429
         ? 'Лимит источника исчерпан; повторите позже.'
-        : 'Источник поиска временно недоступен.',
+        : `Источник поиска недоступен (HTTP ${response.status}).`,
     );
   const body = await readBody(response, 1_000_000);
   try {
-    return record(JSON.parse(Buffer.from(body).toString('utf8')));
+    const parsed: unknown = JSON.parse(Buffer.from(body).toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    return record(parsed);
   } catch {
     throw new ApiError(502, 'Источник вернул некорректный JSON.');
   }
@@ -252,6 +257,54 @@ export function productJsonLdCandidates(
 export async function searchProducts(
   product: SearchProduct,
   options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
+  refresh = false,
+): Promise<SearchResponse> {
+  const response = await searchProductsInternal(product, options);
+  const diagnostics = (response.diagnostics ?? []).map(sourceDiagnostic);
+  const knownSources = [
+    { id: 'food-facts', name: 'Open Food Facts', eanOnly: true },
+    { id: 'sostavista', name: 'Состависта · база EAN', eanOnly: true },
+    ...OPEN_CATALOGS.map((source) => ({ ...source, eanOnly: true })),
+    { id: 'upcitemdb', name: 'UPCitemdb', eanOnly: true },
+    ...REGIONAL_SOURCES.map((source) => ({ ...source, eanOnly: false })),
+    ...WEB_PROVIDER_IDS.map((id) => ({ id, name: WEB_PROVIDER_NAMES[id], eanOnly: false })),
+  ];
+  for (const source of knownSources) {
+    if (diagnostics.some((item) => item.id === source.id)) continue;
+    const reason =
+      source.eanOnly && !product.ean
+        ? 'Для этого каталога нужен GTIN товара.'
+        : response.outcome === 'found'
+          ? 'Точный кандидат уже найден; источник не опрашивался.'
+          : 'Источник не выбран для категории товара, режима поиска или текущих настроек.';
+    diagnostics.push(
+      sourceDiagnostic({
+        id: source.id,
+        source: source.name,
+        status: 'disabled',
+        reason,
+        count: 0,
+        elapsedMs: 0,
+        requests: 0,
+      }),
+    );
+  }
+  return {
+    ...response,
+    diagnostics,
+    outcome:
+      response.outcome ??
+      (response.candidates.length
+        ? 'review'
+        : diagnostics.some((item) => isSourceFailure(item.status))
+          ? 'deferred'
+          : 'not_found'),
+  };
+}
+
+async function searchProductsInternal(
+  product: SearchProduct,
+  options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
 ): Promise<SearchResponse> {
   const warnings: string[] = [];
   const candidates: Candidate[] = [];
@@ -262,22 +315,26 @@ export async function searchProducts(
     try {
       const found = await fromOff(product);
       candidates.push(...found);
-      diagnostics.push({
-        id: 'food-facts',
-        source: 'Open Food Facts',
-        status: product.ean ? 'ok' : 'skipped',
-        count: found.length,
-        elapsedMs: Date.now() - offStartedAt,
-      });
+      diagnostics.push(
+        sourceDiagnostic({
+          id: 'food-facts',
+          source: 'Open Food Facts',
+          status: product.ean ? 'ok' : 'skipped',
+          count: found.length,
+          elapsedMs: Date.now() - offStartedAt,
+        }),
+      );
       if (product.ean) successfulSources++;
     } catch (error) {
-      diagnostics.push({
-        id: 'food-facts',
-        source: 'Open Food Facts',
-        status: 'unavailable',
-        count: 0,
-        elapsedMs: Date.now() - offStartedAt,
-      });
+      diagnostics.push(
+        sourceDiagnostic({
+          id: 'food-facts',
+          source: 'Open Food Facts',
+          count: 0,
+          elapsedMs: Date.now() - offStartedAt,
+          ...sourceFailureDetails(error),
+        }),
+      );
       warnings.push(
         error instanceof ApiError
           ? `Open Food Facts: ${error.message}`
@@ -305,7 +362,7 @@ export async function searchProducts(
         { id: 'upcitemdb', source: 'UPCitemdb' },
       ].map((source): SearchDiagnostic => ({
         ...source,
-        status: 'skipped',
+        status: 'disabled',
         count: 0,
         elapsedMs: 0,
         message: 'Отключён в режиме «Молдова».',
@@ -318,20 +375,22 @@ export async function searchProducts(
   });
   if (!webEnabled || !providers.length || exactFound) {
     for (const provider of ['searxng', 'tavily'])
-      diagnostics.push({
-        id: provider,
-        source: provider === 'searxng' ? 'SearXNG' : 'Tavily Free',
-        status: webEnabled && !exactFound ? 'not_configured' : 'skipped',
-        count: 0,
-        elapsedMs: 0,
-        message: exactFound
-          ? 'Прямой каталог уже дал точный EAN без конфликтов; веб-квота сохранена.'
-          : webEnabled
-            ? 'Нужна настройка сервиса на сервере.'
-            : options.mode === 'moldova'
-              ? 'Отключён в режиме «Молдова».'
-              : 'Веб-поиск выключен в настройках.',
-      });
+      diagnostics.push(
+        sourceDiagnostic({
+          id: provider,
+          source: provider === 'searxng' ? 'SearXNG' : 'Tavily Free',
+          status: webEnabled && !exactFound ? 'not_configured' : 'skipped',
+          count: 0,
+          elapsedMs: 0,
+          message: exactFound
+            ? 'Прямой каталог уже дал точный EAN без конфликтов; веб-квота сохранена.'
+            : webEnabled
+              ? 'Нужна настройка сервиса на сервере.'
+              : options.mode === 'moldova'
+                ? 'Отключён в режиме «Молдова».'
+                : 'Веб-поиск выключен в настройках.',
+        }),
+      );
     if (webEnabled && !providers.length && !exactFound)
       warnings.push(
         'Общий веб-поиск не подключён: доступны прямые каталоги и базы EAN. Подключите SearXNG или Tavily Free.',
@@ -344,25 +403,21 @@ export async function searchProducts(
     successfulSources += result.diagnostics.filter((item) => item.status === 'ok').length;
   }
   if (process.env.BRAVE_SEARCH_API_KEY)
-    diagnostics.push({
-      id: 'brave',
-      source: 'Brave Search',
-      status: 'skipped',
-      count: 0,
-      elapsedMs: 0,
-      message: 'Отключён политикой бесплатного поиска; ключ не используется.',
-    });
-  for (const source of diagnostics.filter((item) => item.status === 'unavailable'))
+    diagnostics.push(
+      sourceDiagnostic({
+        id: 'brave',
+        source: 'Brave Search',
+        status: 'disabled',
+        count: 0,
+        elapsedMs: 0,
+        message: 'Отключён политикой бесплатного поиска; ключ не используется.',
+      }),
+    );
+  for (const source of diagnostics.filter((item) => isSourceFailure(item.status)))
     warnings.push(
       `${source.source}: ${(source.message || 'источник временно недоступен').replace(/[.!]+$/, '')}.`,
     );
-  if (
-    !successfulSources &&
-    (product.ean ||
-      providers.length > 0 ||
-      diagnostics.some((item) => item.status === 'unavailable'))
-  )
-    throw new ApiError(502, warnings.join(' '));
+
   const byImage = new Map<string, Candidate>();
   for (const candidate of candidates) {
     const result = matchCandidate(product, candidate);

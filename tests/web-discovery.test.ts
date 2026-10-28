@@ -85,7 +85,7 @@ describe('free web discovery', () => {
       pageUrl: candidate.pageUrl,
     });
     expect(result.diagnostics).toContainEqual(
-      expect.objectContaining({ id: 'tavily', status: 'skipped' }),
+      expect.objectContaining({ id: 'tavily', status: 'disabled' }),
     );
   });
   it('falls back to free Tavily on SearXNG failure and ignores images without source-page provenance', async () => {
@@ -114,7 +114,7 @@ describe('free web discovery', () => {
     });
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: 'searxng', status: 'unavailable' }),
+        expect.objectContaining({ id: 'searxng', status: 'blocked' }),
         expect.objectContaining({ id: 'tavily', status: 'ok', requests: 2 }),
       ]),
     );
@@ -132,7 +132,7 @@ describe('free web discovery', () => {
     const result = await searchWebDiscovery(product, 4);
     expect(result.candidates).toHaveLength(0);
     expect(serviceJson).toHaveBeenCalledTimes(1);
-    expect(result.diagnostics[0].status).toBe('unavailable');
+    expect(result.diagnostics[0].status).toBe('disabled');
   });
   it('refuses exhausted quota without retry or paid upgrade', async () => {
     vi.stubEnv('SEARXNG_URL', '');

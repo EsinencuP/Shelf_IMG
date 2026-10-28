@@ -20,7 +20,7 @@ HTTP 403, остаётся в его строке; общий HTTP-статус 
    `admin` и пароль через Basic Auth и сохраните JSON. Для Vercel Preview может
    дополнительно требоваться вход в Vercel из-за защиты развёртывания.
 3. Сопоставьте строки по `source` + `ean`: поле `httpStatus` показывает разницу
-   между локальным и облачным IP, в том числе 403. `not-configured` означает,
+   между локальным и облачным IP, в том числе 403. `disabled` означает,
    что переменные сервиса не заданы в этой среде.
 
 В Vercel задайте `MVP_ACCESS_PASSWORD` и нужные переменные источников в выбранной
@@ -38,13 +38,13 @@ UPCitemdb может занимать больше обычных 30 секун�
 И локальный сервер, и Vercel вернули HTTP 200 с 31 строкой JSON.
 При сравнении одинаковых трёх EAN получены следующие результаты:
 
-| Источник        | Локально         | Vercel Preview   |
-| --------------- | ---------------- | ---------------- |
-| METRO Moldova   | HTTP 200         | HTTP 403         |
-| Bonus Moldova   | HTTP 200         | HTTP 403         |
-| Linella         | HTTP 403         | HTTP 403         |
-| SearXNG         | `not-configured` | `not-configured` |
-| Tavily `/usage` | HTTP 200         | `not-configured` |
+| Источник        | Локально   | Vercel Preview |
+| --------------- | ---------- | -------------- |
+| METRO Moldova   | HTTP 200   | HTTP 403       |
+| Bonus Moldova   | HTTP 200   | HTTP 403       |
+| Linella         | HTTP 403   | HTTP 403       |
+| SearXNG         | `disabled` | `disabled`     |
+| Tavily `/usage` | HTTP 200   | `disabled`     |
 
 Tavily не настроен в среде Preview; это отдельный статус, а не блокировка IP.
 Полные локальные отчёты и сопоставление сохранены в исключённой из Git папке
@@ -83,11 +83,12 @@ OPENFOODFACTS_USER_AGENT=
 SearXNG должен разрешать JSON-выдачу. Используется `/search?format=json&categories=images`;
 локальный сервер допустим. [Контракт SearXNG](https://docs.searxng.org/dev/search_api.html).
 Без адреса SearXNG или ключа Tavily соответствующие строки получают
-`not-configured`, HTTP и число изображений — `null`.
+`disabled`, HTTP и число изображений — `null`.
 
 Строки содержат источник, EAN, фактический HTTP-статус, время в миллисекундах,
-число уникальных изображений и результат: `ok`, `empty`, `http-error`,
-`timeout`, `network-error`, `invalid-response`, `not-configured`.
+число уникальных изображений и результат: `ok`, `empty`, `blocked`,
+`timeout`, `quota`, `parse_error`, `disabled`, `relay_offline`. Поле `reason`
+объясняет результат; [единые коды причин](SOURCE-STATUS.md).
 Ноль означает успешно разобранный ответ без изображений; `null` — число
 неизвестно или неприменимо. HTTP сохраняется и при ошибке разбора тела.
 Для Tavily сохраняются только поля тарифа и использования, без ключей и сырых ответов.

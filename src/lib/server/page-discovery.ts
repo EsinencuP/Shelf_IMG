@@ -1,3 +1,4 @@
+import { sourceFailureDetails } from '../source-status';
 import type { Candidate } from '../types';
 import { catalogProducts, obj, str } from './catalog-utils';
 import { publicGet, resolvePublicUrl } from './public-fetch';
@@ -42,11 +43,34 @@ export async function discoverPage(
   url: string,
   product: SearchProduct,
   budget: { rendered: number },
-): Promise<{ candidates: Candidate[]; rendered: boolean; conflict?: boolean }> {
+): Promise<{
+  candidates: Candidate[];
+  rendered: boolean;
+  conflict?: boolean;
+  failure?: ReturnType<typeof sourceFailureDetails>;
+}> {
   const page = await publicGet(url, { maxBytes: 750_000, timeoutMs: 8_000, accept: 'text/html' });
   // Do not turn an upstream ban or robots denial into a browser retry.
-  if (page.status !== 200 || !page.headers['content-type']?.includes('text/html'))
-    return { candidates: [], rendered: false };
+  if (page.status === 404) return { candidates: [], rendered: false };
+  if (page.status !== 200)
+    return {
+      candidates: [],
+      rendered: false,
+      failure: sourceFailureDetails({
+        status: page.status,
+        message: `Карточка ответила HTTP ${page.status}.`,
+      }),
+    };
+  if (!page.headers['content-type']?.includes('text/html'))
+    return {
+      candidates: [],
+      rendered: false,
+      failure: {
+        status: 'parse_error',
+        reason: 'Карточка вернула неверный формат HTML.',
+        httpStatus: 200,
+      },
+    };
   const evidence = pageEvidence(page.body.toString('utf8'), page.url, product);
   const { candidates } = evidence;
   if (candidates.length || budget.rendered >= 1 || !crawlerConfigured() || !crawlerAllows(page.url))

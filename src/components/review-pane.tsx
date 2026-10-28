@@ -17,6 +17,7 @@ import type { Candidate, ExportProfile, ProductRow, VisionResult } from '@/lib/t
 import { apiFetch } from '@/lib/client-api';
 import { safeFileStem, downloadBlob } from '@/lib/export';
 import BlobImage from './blob-image';
+import { isSourceFailure, sourceDiagnostic, SOURCE_STATUS_LABELS } from '@/lib/source-status';
 
 export default function ReviewPane({
   row,
@@ -57,6 +58,7 @@ export default function ReviewPane({
     onBusy(value);
   }
   const candidate = row.candidates.find((item) => item.id === row.selectedCandidateId);
+  const sourceDiagnostics = (row.searchDiagnostics ?? []).map(sourceDiagnostic);
   const validIdentity = !!row.sku.trim() && !!(row.nameRu.trim() || row.nameRo.trim());
   const locked = busy || disabled;
   const patch = (value: Partial<ProductRow>) => onPatch(row.id, value);
@@ -304,31 +306,24 @@ export default function ReviewPane({
       )}
 
       {
-        <details className="search-diagnostics" hidden={!row.searchDiagnostics?.length}>
+        <details className="search-diagnostics" hidden={!sourceDiagnostics.length}>
           <summary>
             Поиск по источникам (
-            {row.searchDiagnostics?.filter(
-              (item) => item.status === 'ok' || item.status === 'unavailable',
-            ).length ?? 0}{' '}
-            проверено)
+            {sourceDiagnostics.filter((item) => item.status !== 'disabled').length} проверено,{' '}
+            {sourceDiagnostics.filter((item) => isSourceFailure(item.status)).length} ошибок)
           </summary>
           <ul>
-            {row.searchDiagnostics?.map((source) => (
-              <li key={source.id}>
+            {sourceDiagnostics.map((source) => (
+              <li key={source.id} data-source-status={source.status}>
                 <span>{source.source}</span>
                 <strong>
                   {source.status === 'ok'
-                    ? `${source.count} фото`
-                    : source.status === 'not_configured'
-                      ? 'Нет ключа'
-                      : source.status === 'skipped'
-                        ? source.message?.includes('Отключён') ||
-                          source.message?.includes('выключен')
-                          ? 'Отключён'
-                          : 'Не требуется'
-                        : 'Недоступен'}
+                    ? source.id === 'barcode-identity'
+                      ? 'Название найдено'
+                      : `${source.count} фото`
+                    : SOURCE_STATUS_LABELS[source.status]}
                 </strong>
-                {source.message && <small>{source.message}</small>}
+                <small>{source.reason}</small>
               </li>
             ))}
           </ul>

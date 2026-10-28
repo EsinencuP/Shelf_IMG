@@ -1,12 +1,10 @@
+import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
 import type { Candidate, SearchDiagnostic } from '../types';
 import { obj, str, safeUrl, candidateId, publicJson } from './catalog-utils';
 import { normalizeGtin, type SearchProduct } from './validation';
 
-export const OPEN_CATALOGS = [
-  { id: 'beauty-facts', name: 'Open Beauty Facts', domain: 'openbeautyfacts.org' },
-  { id: 'products-facts', name: 'Open Products Facts', domain: 'openproductsfacts.org' },
-  { id: 'petfood-facts', name: 'Open Pet Food Facts', domain: 'openpetfoodfacts.org' },
-] as const;
+import { OPEN_CATALOGS } from '../search-sources';
+export { OPEN_CATALOGS } from '../search-sources';
 
 export function openCatalogCandidates(
   data: unknown,
@@ -133,24 +131,28 @@ export async function searchSupplementalCatalogs(
       try {
         const result = await job.run();
         candidates.push(...result);
-        diagnostics.push({
-          id: job.id,
-          source: job.name,
-          status: 'ok',
-          count: result.length,
-          elapsedMs: Date.now() - start,
-          requests: 1,
-        });
+        diagnostics.push(
+          sourceDiagnostic({
+            id: job.id,
+            source: job.name,
+            status: 'ok',
+            count: result.length,
+            elapsedMs: Date.now() - start,
+            requests: 1,
+          }),
+        );
       } catch (error) {
-        diagnostics.push({
-          id: job.id,
-          source: job.name,
-          status: 'unavailable',
-          count: 0,
-          elapsedMs: Date.now() - start,
-          requests: 1,
-          message: error instanceof Error ? error.message : 'Источник недоступен.',
-        });
+        diagnostics.push(
+          sourceDiagnostic({
+            id: job.id,
+            source: job.name,
+            count: 0,
+            elapsedMs: Date.now() - start,
+            requests: 1,
+            message: error instanceof Error ? error.message : 'Источник недоступен.',
+            ...sourceFailureDetails(error),
+          }),
+        );
       }
     }),
   );

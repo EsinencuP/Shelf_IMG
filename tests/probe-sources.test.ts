@@ -27,7 +27,7 @@ describe('source probe', () => {
       expect(row).toMatchObject({ httpStatus: 200, status: 'empty', imageCount: 0 });
       expect(row.elapsedMs).toBeGreaterThanOrEqual(0);
     }
-    expect(report.results.filter((row) => row.status === 'not-configured')).toHaveLength(4);
+    expect(report.results.filter((row) => row.status === 'disabled')).toHaveLength(4);
     expect(sleep.mock.calls.some(([ms]) => ms > 9000)).toBe(true);
   });
 
@@ -47,14 +47,14 @@ describe('source probe', () => {
     });
     expect(report.results.find((row) => row.source === 'METRO Moldova')).toMatchObject({
       httpStatus: 403,
-      status: 'http-error',
+      status: 'blocked',
       imageCount: null,
     });
     expect(report.results.find((row) => row.source === 'Linella')?.status).toBe('timeout');
-    expect(report.results.find((row) => row.source === 'Bucuria')?.status).toBe('network-error');
+    expect(report.results.find((row) => row.source === 'Bucuria')?.status).toBe('blocked');
     expect(report.results.find((row) => row.source === 'UPCitemdb')).toMatchObject({
       httpStatus: 200,
-      status: 'invalid-response',
+      status: 'parse_error',
     });
     expect(JSON.stringify(report)).not.toContain('secret');
   });
@@ -159,9 +159,9 @@ describe('source probe', () => {
     });
     expect(report.results.find((row) => row.source === 'SearXNG')).toMatchObject({
       httpStatus: 429,
-      status: 'http-error',
+      status: 'quota',
     });
-    expect(report.results.at(-1)).toMatchObject({ httpStatus: 200, status: 'invalid-response' });
+    expect(report.results.at(-1)).toMatchObject({ httpStatus: 200, status: 'parse_error' });
   });
 
   it('follows Bucuria product links and counts package images, excluding logos', async () => {
@@ -200,7 +200,7 @@ describe('source probe', () => {
     });
     expect(report.results.find((row) => row.source === 'Bucuria')).toMatchObject({
       httpStatus: 200,
-      status: 'http-error',
+      status: 'blocked',
       imageCount: null,
       message: 'Карточка Bucuria: HTTP 403',
     });
@@ -218,7 +218,7 @@ describe('source probe', () => {
     });
     expect(report.results.find((row) => row.source === 'Linella')).toMatchObject({
       httpStatus: 200,
-      status: 'invalid-response',
+      status: 'parse_error',
       imageCount: null,
     });
   });

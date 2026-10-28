@@ -75,7 +75,9 @@ export async function publicJson(url: string, interval = 700): Promise<unknown> 
           : `Источник ответил HTTP ${response.status}.`,
       );
     try {
-      return JSON.parse(response.body.toString('utf8'));
+      const data: unknown = JSON.parse(response.body.toString('utf8'));
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
+      return data;
     } catch {
       throw new ApiError(502, 'Источник вернул некорректный JSON.');
     }
@@ -89,8 +91,10 @@ export async function publicHtml(url: string): Promise<string> {
       timeoutMs: 9000,
       accept: 'text/html',
     });
-    if (response.status !== 200 || !response.headers['content-type']?.includes('text/html'))
+    if (response.status !== 200)
       throw new ApiError(502, `Страница источника недоступна (HTTP ${response.status}).`);
+    if (!response.headers['content-type']?.includes('text/html'))
+      throw new ApiError(502, 'Источник вернул некорректный формат HTML.');
     return response.body.toString('utf8');
   });
 }

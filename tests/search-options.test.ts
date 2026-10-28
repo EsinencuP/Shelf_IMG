@@ -94,11 +94,11 @@ describe('search modes and API budgets', () => {
     expect(searchSupplementalCatalogs).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.diagnostics?.find((source) => source.id === 'metro-ua')).toMatchObject({
-      status: 'skipped',
+      status: 'disabled',
       elapsedMs: 0,
     });
     expect(result.diagnostics?.find((source) => source.id === 'brave')).toMatchObject({
-      status: 'skipped',
+      status: 'disabled',
     });
   });
   it('expanded mode restores foreign catalogs without calling Brave when disabled', async () => {
@@ -113,7 +113,7 @@ describe('search modes and API budgets', () => {
     ).toBe(true);
     expect(searchSupplementalCatalogs).toHaveBeenCalledOnce();
     expect(fetcher).not.toHaveBeenCalled();
-    expect(result.diagnostics?.find((source) => source.id === 'metro-ua')?.status).toBe('ok');
+    expect(result.diagnostics?.find((source) => source.id === 'metro-ua')?.status).toBe('empty');
   });
   it('a legacy Brave key never activates paid search', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-key');

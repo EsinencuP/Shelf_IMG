@@ -66,7 +66,8 @@ export function guardRequest(request: Request, allowUnconfigured = false): void 
     if (authorization.startsWith('Basic ') && authorization.length < 4096) {
       const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
       supplied = decoded.slice(decoded.indexOf(':') + 1);
-      if (!decoded.includes(':')) supplied = '';
+      if (!decoded.includes(':') || decoded.slice(0, decoded.indexOf(':')) !== 'admin')
+        supplied = '';
     }
     const hash = (value: string) => createHash('sha256').update(value).digest();
     if (!timingSafeEqual(hash(password), hash(supplied)))

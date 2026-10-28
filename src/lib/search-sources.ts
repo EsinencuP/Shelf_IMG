@@ -65,3 +65,9 @@ export const INDEXED_DOMAINS = [
   'mega-image.ro',
   'sezamo.ro',
 ] as const;
+
+export const OPEN_CATALOGS = [
+  { id: 'beauty-facts', name: 'Open Beauty Facts', domain: 'openbeautyfacts.org' },
+  { id: 'products-facts', name: 'Open Products Facts', domain: 'openproductsfacts.org' },
+  { id: 'petfood-facts', name: 'Open Pet Food Facts', domain: 'openpetfoodfacts.org' },
+] as const;

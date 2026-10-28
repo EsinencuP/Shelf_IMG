@@ -54,7 +54,7 @@ describe('protected source health endpoint', () => {
           httpStatus: 403,
           elapsedMs: 82,
           imageCount: null,
-          status: 'http-error' as const,
+          status: 'blocked' as const,
         },
         {
           source: 'Open Food Facts',

@@ -111,7 +111,7 @@ describe('API input and access boundaries', () => {
       Origin: 'https://shelf.example.org',
       'X-Forwarded-Proto': 'https',
       'X-Forwarded-Host': 'attacker.site',
-      Authorization: `Basic ${Buffer.from('shelf:correct').toString('base64')}`,
+      Authorization: `Basic ${Buffer.from('admin:correct').toString('base64')}`,
     };
     expect(() =>
       guardRequest(new Request('http://localhost:3000/api/search', { method: 'POST', headers })),
@@ -190,7 +190,7 @@ describe('API input and access boundaries', () => {
     vi.stubEnv('MVP_ACCESS_PASSWORD', 'correct');
     expect((await sessionGet(new Request('https://shelf.site/api/session'))).status).toBe(401);
     const request = new Request('https://shelf.site/api/session', {
-      headers: { Authorization: `Basic ${Buffer.from('shelf:correct').toString('base64')}` },
+      headers: { Authorization: `Basic ${Buffer.from('admin:correct').toString('base64')}` },
     });
     expect((await sessionGet(request)).status).toBe(200);
   });
@@ -396,7 +396,7 @@ describe('matching and source evidence', () => {
     expect(result.candidates[0].gtinExact).toBe(true);
     expect(fetcher.mock.calls[0]?.[0]).toContain(`/product/${product.ean}.json`);
     expect(result.diagnostics?.find((source) => source.id === 'tavily')).toMatchObject({
-      status: 'skipped',
+      status: 'disabled',
       message: expect.stringContaining('квота сохранена'),
     });
   });
@@ -406,7 +406,10 @@ describe('matching and source evidence', () => {
       'fetch',
       vi.fn(async () => new Response('', { status: 503 })),
     );
-    await expect(searchProducts(product)).rejects.toMatchObject({ status: 502 });
+    const result = await searchProducts(product);
+    expect(result.candidates).toEqual([]);
+    expect(result.outcome).toBe('deferred');
+    expect(result.diagnostics?.find((item) => item.id === 'food-facts')?.status).toBe('blocked');
   });
   it('never sends a legacy Brave key to an API in free-only mode', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'server-only-key');
@@ -421,7 +424,7 @@ describe('matching and source evidence', () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.diagnostics?.find((source) => source.id === 'brave')).toMatchObject({
-      status: 'skipped',
+      status: 'disabled',
     });
   });
 });

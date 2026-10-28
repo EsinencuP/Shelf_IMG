@@ -70,6 +70,7 @@ export interface SearchOptions {
   mode: 'moldova' | 'expanded';
   useWeb: boolean;
   webQueryLimit: number;
+  useCache?: boolean;
 }
 
 export const DEFAULT_SEARCH_OPTIONS: SearchOptions = {
@@ -100,15 +101,22 @@ export interface SearchResponse {
   candidates: Candidate[];
   warnings: string[];
   diagnostics?: SearchDiagnostic[];
+  outcome?: 'found' | 'review' | 'not_found' | 'deferred';
 }
+export type SourceStatus =
+  'ok' | 'empty' | 'blocked' | 'timeout' | 'quota' | 'parse_error' | 'disabled' | 'relay_offline';
+
 export interface SearchDiagnostic {
   id: string;
   source: string;
-  status: 'ok' | 'unavailable' | 'skipped' | 'not_configured';
+  status: SourceStatus;
   count: number;
   elapsedMs: number;
   requests?: number;
   message?: string;
+  /** Human-readable reason; optional only for older saved batches. */
+  reason?: string;
+  httpStatus?: number;
 }
 export interface AppConfig {
   braveConfigured: boolean;

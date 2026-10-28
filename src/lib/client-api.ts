@@ -3,7 +3,7 @@
 let authorization = '';
 export function setAccessPassword(password: string) {
   authorization = password
-    ? `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`shelf:${password}`)))}`
+    ? `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`admin:${password}`)))}`
     : '';
 }
 export async function apiFetch(url: string, init: RequestInit = {}) {

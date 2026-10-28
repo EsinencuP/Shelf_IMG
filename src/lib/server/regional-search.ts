@@ -1,3 +1,22 @@
+import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
+import { ApiError } from './http';
+class PartialCatalogFailure extends Error {
+  constructor(
+    public candidates: Candidate[],
+    public failure: unknown,
+  ) {
+    super('Часть карточек недоступна.');
+  }
+}
+function collectCards(results: PromiseSettledResult<Candidate[]>[]): Candidate[] {
+  const candidates = results.flatMap((result) =>
+    result.status === 'fulfilled' ? result.value : [],
+  );
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw new PartialCatalogFailure(candidates, failure.reason);
+  return candidates;
+}
+
 import { load } from 'cheerio/slim';
 import type { Candidate, SearchDiagnostic } from '../types';
 import {
@@ -117,6 +136,8 @@ async function searchZakaz(
       `https://${source.api}/stores/${source.store}/products/search/?${new URLSearchParams({ q: query })}`,
       800,
     );
+    if (!Array.isArray(obj(data).results))
+      throw new ApiError(502, 'Каталог вернул некорректную выдачу.');
     for (const candidate of relevant(product, zakazCandidates(data, source)))
       result.set(candidate.imageUrl, candidate);
     if (
@@ -189,7 +210,7 @@ async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
       }));
     }),
   );
-  return results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+  return collectCards(results);
 }
 
 export function bucuriaLinks(html: string): { title: string; url: string }[] {
@@ -280,7 +301,7 @@ async function searchBucuria(product: SearchProduct): Promise<Candidate[]> {
       return relevant(product, bucuriaProductCandidates(page, link.url));
     }),
   );
-  return results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+  return collectCards(results);
 }
 
 export async function searchRegionalSources(
@@ -305,47 +326,58 @@ export async function searchRegionalSources(
         const start = Date.now();
         try {
           if (mode === 'moldova' && job.id.endsWith('-ua')) {
-            diagnostics.push({
-              id: job.id,
-              source: job.name,
-              status: 'skipped',
-              count: 0,
-              elapsedMs: 0,
-              message: 'Отключён в режиме «Молдова». Расширьте поиск для этой позиции.',
-            });
+            diagnostics.push(
+              sourceDiagnostic({
+                id: job.id,
+                source: job.name,
+                status: 'skipped',
+                count: 0,
+                elapsedMs: 0,
+                message: 'Отключён в режиме «Молдова». Расширьте поиск для этой позиции.',
+              }),
+            );
             return;
           }
           if (
             job.id === 'bucuria' &&
             !/bucuria|букурия/i.test(`${product.brand} ${product.nameRo} ${product.nameRu}`)
           ) {
-            diagnostics.push({
-              id: job.id,
-              source: job.name,
-              status: 'skipped',
-              count: 0,
-              elapsedMs: 0,
-            });
+            diagnostics.push(
+              sourceDiagnostic({
+                id: job.id,
+                source: job.name,
+                status: 'skipped',
+                count: 0,
+                elapsedMs: 0,
+              }),
+            );
             return;
           }
           const result = await job.run();
           candidates.push(...result);
-          diagnostics.push({
-            id: job.id,
-            source: job.name,
-            status: 'ok',
-            count: result.length,
-            elapsedMs: Date.now() - start,
-          });
+          diagnostics.push(
+            sourceDiagnostic({
+              id: job.id,
+              source: job.name,
+              status: 'ok',
+              count: result.length,
+              elapsedMs: Date.now() - start,
+            }),
+          );
         } catch (error) {
-          diagnostics.push({
-            id: job.id,
-            source: job.name,
-            status: 'unavailable',
-            count: 0,
-            elapsedMs: Date.now() - start,
-            message: error instanceof Error ? error.message : 'Источник временно недоступен.',
-          });
+          if (error instanceof PartialCatalogFailure) candidates.push(...error.candidates);
+          diagnostics.push(
+            sourceDiagnostic({
+              id: job.id,
+              source: job.name,
+              count: error instanceof PartialCatalogFailure ? error.candidates.length : 0,
+              elapsedMs: Date.now() - start,
+              message: error instanceof Error ? error.message : 'Источник временно недоступен.',
+              ...sourceFailureDetails(
+                error instanceof PartialCatalogFailure ? error.failure : error,
+              ),
+            }),
+          );
         }
       }),
     );

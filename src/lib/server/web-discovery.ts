@@ -1,3 +1,7 @@
+import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
+import { createHash } from 'node:crypto';
+export const WEB_PROVIDER_IDS = ['searxng', 'tavily'] as const;
+export const WEB_PROVIDER_NAMES = { searxng: 'SearXNG', tavily: 'Tavily Free' };
 import type { Candidate, SearchDiagnostic } from '../types';
 import { ApiError } from './http';
 import { candidateId, obj, safeUrl, str } from './catalog-utils';
@@ -189,6 +193,16 @@ export async function searchWebDiscovery(
             reads++;
             try {
               const result = await discoverPage(pageUrl, product, budget);
+              if (result.failure)
+                diagnostics.push(
+                  sourceDiagnostic({
+                    id: 'page-' + createHash('sha256').update(pageUrl).digest('hex').slice(0, 12),
+                    source: new URL(pageUrl).hostname,
+                    ...result.failure,
+                    count: 0,
+                    elapsedMs: 0,
+                  }),
+                );
               providerCandidates.push(...result.candidates);
               if (result.conflict) conflictingPages.add(pageUrl);
             } catch {
@@ -222,45 +236,51 @@ export async function searchWebDiscovery(
           break;
       }
       candidates.push(...providerCandidates);
-      diagnostics.push({
-        id: provider,
-        source: names[provider],
-        status: 'ok',
-        count: providerCandidates.length,
-        elapsedMs: Date.now() - start,
-        requests,
-        message:
-          provider === 'tavily'
-            ? 'Только basic; Free/Researcher и отключённый pay-as-you-go проверены.'
-            : 'Собственный поисковый сервер; без токенов LLM.',
-      });
+      diagnostics.push(
+        sourceDiagnostic({
+          id: provider,
+          source: names[provider],
+          status: 'ok',
+          count: providerCandidates.length,
+          elapsedMs: Date.now() - start,
+          requests,
+          message:
+            provider === 'tavily'
+              ? 'Только basic; Free/Researcher и отключённый pay-as-you-go проверены.'
+              : 'Собственный поисковый сервер; без токенов LLM.',
+        }),
+      );
       if (providerCandidates.some((candidate) => !matchCandidate(product, candidate).rejected))
         break;
     } catch (error) {
       // Keep successful earlier query results if a later query failed.
       candidates.push(...providerCandidates);
-      diagnostics.push({
-        id: provider,
-        source: names[provider],
-        status: completed ? 'ok' : 'unavailable',
-        count: providerCandidates.length,
-        elapsedMs: Date.now() - start,
-        requests,
-        message: error instanceof ApiError ? error.message : 'Сервис поиска временно недоступен.',
-      });
+      diagnostics.push(
+        sourceDiagnostic({
+          id: provider,
+          source: names[provider],
+          count: providerCandidates.length,
+          elapsedMs: Date.now() - start,
+          requests,
+          message: error instanceof ApiError ? error.message : 'Сервис поиска временно недоступен.',
+          ...sourceFailureDetails(error),
+        }),
+      );
       if (providerCandidates.some((candidate) => !matchCandidate(product, candidate).rejected))
         break;
     }
   }
   for (const provider of configuredWebProviders())
     if (!diagnostics.some((item) => item.id === provider))
-      diagnostics.push({
-        id: provider,
-        source: names[provider],
-        status: 'skipped',
-        count: 0,
-        elapsedMs: 0,
-        message: 'Предыдущий бесплатный источник уже дал кандидатов.',
-      });
+      diagnostics.push(
+        sourceDiagnostic({
+          id: provider,
+          source: names[provider],
+          status: 'skipped',
+          count: 0,
+          elapsedMs: 0,
+          message: 'Предыдущий бесплатный источник уже дал кандидатов.',
+        }),
+      );
   return { candidates, diagnostics, warnings };
 }
