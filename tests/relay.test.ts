@@ -220,6 +220,8 @@ describe('relay egress boundary', () => {
   });
   it.each([
     [{ address: '127.0.0.1', family: 4 }],
+    [{ address: '10.20.30.40', family: 4 }],
+    [{ address: '169.254.169.254', family: 4 }],
     [
       { address: '93.184.216.34', family: 4 },
       { address: '10.0.0.1', family: 4 },
@@ -260,6 +262,49 @@ describe('relay egress boundary', () => {
     expect(response.headers.get('x-shelf-upstream-url')).toBe('https://api.metro.zakaz.md/product');
     expect(resolver).toHaveBeenCalledTimes(2);
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it.each([301, 302, 303, 307, 308])(
+    'follows relative HTTP %s redirects using GET within the allowlist',
+    async (status) => {
+      const { handler, resolver, transport } = setup();
+      transport.mockResolvedValueOnce({
+        status,
+        headers: { location: '/ru/products/next' },
+        body: Buffer.alloc(0),
+        url: 'https://metro.zakaz.md/ru/',
+      });
+      const response = await handler(fetchRequest());
+      expect(response.status).toBe(200);
+      expect(response.headers.get('x-shelf-upstream-url')).toBe(
+        'https://metro.zakaz.md/ru/products/next',
+      );
+      expect(resolver).toHaveBeenCalledTimes(2);
+      expect(transport).toHaveBeenCalledTimes(2);
+      expect(transport.mock.calls.every(([, , options]) => options.method === 'GET')).toBe(true);
+    },
+  );
+  it('stops redirect loops after three hops', async () => {
+    const { handler, resolver, transport } = setup();
+    transport.mockResolvedValue({
+      status: 302,
+      headers: { location: '/ru/' },
+      body: Buffer.alloc(0),
+      url: 'https://metro.zakaz.md/ru/',
+    });
+    expect((await handler(fetchRequest())).status).toBe(502);
+    expect(resolver).toHaveBeenCalledTimes(4);
+    expect(transport).toHaveBeenCalledTimes(4);
+  });
+  it('rejects redirects without a Location header', async () => {
+    const { handler, transport } = setup();
+    transport.mockResolvedValueOnce({
+      status: 302,
+      headers: {},
+      body: Buffer.alloc(0),
+      url: 'https://metro.zakaz.md/ru/',
+    });
+    expect((await handler(fetchRequest())).status).toBe(502);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
   it('enforces response size and preserves upstream 403/429', async () => {
     const { handler, transport } = setup();
