@@ -259,6 +259,7 @@ export async function searchProducts(
   options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
   refresh = false,
 ): Promise<SearchResponse> {
+  const started = performance.now();
   const response = await searchProductsInternal(product, options);
   const diagnostics = (response.diagnostics ?? []).map(sourceDiagnostic);
   const knownSources = [
@@ -292,6 +293,7 @@ export async function searchProducts(
   return {
     ...response,
     diagnostics,
+    elapsedMs: Math.max(0, Math.round(performance.now() - started)),
     outcome:
       response.outcome ??
       (response.candidates.length

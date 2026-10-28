@@ -101,6 +101,8 @@ export interface SearchResponse {
   candidates: Candidate[];
   warnings: string[];
   diagnostics?: SearchDiagnostic[];
+  /** Current server execution, including cache lookup and orchestration (not a sum of source times). */
+  elapsedMs?: number;
   outcome?: 'found' | 'review' | 'not_found' | 'deferred';
 }
 export type SourceStatus =

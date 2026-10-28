@@ -20,6 +20,7 @@ describe('source probe', () => {
     const report = await probeSources({ env: {}, fetch: fetcher, sleep });
     expect(REFERENCE_EANS.every((ean) => normalizeGtin(ean))).toBe(true);
     expect(report.results).toHaveLength(31);
+    expect(report.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(fetcher).toHaveBeenCalledTimes(27);
     for (const row of report.results.filter(
       (row) => !['SearXNG', 'Tavily /usage'].includes(row.source),

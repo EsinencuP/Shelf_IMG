@@ -63,3 +63,18 @@ it('returns a blocked source reason instead of a definitive not-found outcome', 
   });
   expect(response.outcome).toBe('deferred');
 });
+
+it('measures total wall time instead of adding overlapping source durations', async () => {
+  setup();
+  vi.mocked(searchRegionalSources).mockResolvedValueOnce({
+    candidates: [],
+    diagnostics: [{ id: 'metro-md', source: 'METRO', status: 'empty', count: 0, elapsedMs: 900 }],
+  });
+  const now = vi.spyOn(performance, 'now').mockReturnValue(137);
+  now.mockReturnValueOnce(100);
+  try {
+    expect((await searchProducts(product, options)).elapsedMs).toBe(37);
+  } finally {
+    now.mockRestore();
+  }
+});

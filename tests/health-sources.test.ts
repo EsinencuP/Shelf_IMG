@@ -45,6 +45,7 @@ describe('protected source health endpoint', () => {
 
   it('returns the shared report unchanged, including individual HTTP 403s', async () => {
     const report: Awaited<ReturnType<typeof probeSources>> = {
+      elapsedMs: 120,
       generatedAt: '2026-10-28T12:00:00.000Z',
       referenceEans: ['4840053004404'],
       results: [
@@ -105,7 +106,7 @@ describe('protected source health endpoint', () => {
     );
     const pending = Array.from({ length: 3 }, () => GET(request('admin:probe-password')));
     expect((await GET(request('admin:probe-password'))).status).toBe(429);
-    finish({ generatedAt: '', referenceEans: [], results: [] });
+    finish({ generatedAt: '', referenceEans: [], results: [], elapsedMs: 0 });
     expect((await Promise.all(pending)).every((response) => response.status === 200)).toBe(true);
     expect((await GET(request('admin:probe-password'))).status).toBe(200);
   });

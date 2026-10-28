@@ -157,6 +157,7 @@ export async function probeSources(
     timeoutMs?: number;
   } = {},
 ) {
+  const startedAt = performance.now();
   const env = options.env ?? process.env;
   const request = options.fetch ?? fetch;
   const sleep = options.sleep ?? ((ms) => new Promise<void>((done) => setTimeout(done, ms)));
@@ -282,5 +283,10 @@ export async function probeSources(
       return results;
     }),
   );
-  return { generatedAt, referenceEans: [...REFERENCE_EANS], results: rows.flat() };
+  return {
+    generatedAt,
+    referenceEans: [...REFERENCE_EANS],
+    results: rows.flat(),
+    elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+  };
 }

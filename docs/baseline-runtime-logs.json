@@ -1,0 +1,2274 @@
+{
+  "deploymentId": "dpl_HCxXdMYAvTt8JvYuprwfEBvZECxE",
+  "query": "shelf.search",
+  "records": [
+    {
+      "event": "shelf.search",
+      "requestId": "ab60f9d4-a4ee-4a53-8785-8788fd5eca9f",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2181,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 818
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 1362
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "bbfea0da-5236-4e96-9df8-13754dc8f6e7",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2196,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 137
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 2054
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "8b2b33f1-6cc6-427d-a718-5ddc7bec5305",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2168,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 699
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1468
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "78ced262-c56a-42d6-ab6b-2e3fb81ada83",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 1935,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1074
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 860
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "3c9281fd-d914-4782-a888-5bec78f52fe5",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2094,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 126
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1966
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "369e860c-d7a0-4252-9fc9-9db88e55ecd3",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2309,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 645
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1603
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 42,
+          "httpStatus": 403
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 41,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 59,
+          "httpStatus": 403
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "691ed2e2-6d1d-44a3-9477-8d4f84bbd869",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2233,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 857
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 1374
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "20e560b1-2dbe-4abe-bf84-51c5f6f5534c",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 1988,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 137
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1848
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "4a5d802d-994e-4352-b5a4-a12351ed8794",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2125,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 664
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1461
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "4c921a57-d394-47c1-b1af-5671cd81893d",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2154,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 808
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 1344
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "3dda5585-3a1b-4c38-a188-6e25436d00d6",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2059,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 128
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1927
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "cc087aea-a3cf-4a9a-a3d7-e0ffd6ee1122",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2081,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 636
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1445
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "cf827331-c7a4-4d45-8522-f9143a3a4ccf",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2096,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 876
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 1218
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "e90d312c-58f3-488a-bfe8-e7009644b817",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2013,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 143
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1866
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "b0c2da58-2c49-4be1-88ad-9401a4b428ef",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2058,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 676
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1381
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "fad759e4-5d01-460a-96a6-e295774fef53",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2145,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1064
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 1079
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "529d1440-d221-46e5-a37b-6571909f0401",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 1914,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 390
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1521
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "1ab2b846-374f-4925-b708-9086b608ec44",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2117,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 679
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1438
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "5ed0f928-b3db-4280-a6eb-f14427fe5e9b",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 1862,
+      "outcome": "found",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1093
+        },
+        {
+          "id": "food-facts",
+          "status": "ok",
+          "count": 3,
+          "elapsedMs": 766
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bonus-md",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "linella",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "5c7d6352-f768-4833-91ba-8a1135010413",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 1879,
+      "outcome": "review",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "ok",
+          "count": 1,
+          "elapsedMs": 133
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1738
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 0,
+          "httpStatus": 503
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 1,
+          "httpStatus": 503
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    },
+    {
+      "event": "shelf.search",
+      "requestId": "d387075c-2e72-474a-9e32-7558afe86885",
+      "region": "fra1",
+      "httpStatus": 200,
+      "elapsedMs": 2067,
+      "outcome": "deferred",
+      "sources": [
+        {
+          "id": "sostavista",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 1839
+        },
+        {
+          "id": "food-facts",
+          "status": "empty",
+          "count": 0,
+          "elapsedMs": 103
+        },
+        {
+          "id": "metro-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "novus-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "auchan-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavria-ua",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "bucuria",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "metro-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 72,
+          "httpStatus": 403
+        },
+        {
+          "id": "bonus-md",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 70,
+          "httpStatus": 503
+        },
+        {
+          "id": "linella",
+          "status": "blocked",
+          "count": 0,
+          "elapsedMs": 119,
+          "httpStatus": 403
+        },
+        {
+          "id": "brave",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "tavily",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "beauty-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "products-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "petfood-facts",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        },
+        {
+          "id": "upcitemdb",
+          "status": "disabled",
+          "count": 0,
+          "elapsedMs": 0
+        }
+      ]
+    }
+  ]
+}
