@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { ApiError, readBody } from './http';
 import { USER_AGENT, validatePublicUrl } from './public-fetch';
+import { outboundFetch } from './outbound-fetch';
 import { matchCandidate } from './matching';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { searchRegionalSources } from './regional-search';
@@ -37,10 +38,9 @@ async function providerJson(
   headers: Record<string, string> = {},
   emptyOnMissing = false,
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(url, {
+  const response = await outboundFetch(url, {
     cache: 'no-store',
     redirect: 'error',
-    signal: AbortSignal.timeout(12_000),
     headers: {
       'User-Agent': process.env.OPENFOODFACTS_USER_AGENT || USER_AGENT,
       Accept: 'application/json',

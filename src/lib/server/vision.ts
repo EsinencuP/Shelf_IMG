@@ -1,6 +1,7 @@
 import type { Candidate, VisionResult } from '../types';
 import { ApiError, readBody } from './http';
 import { inspectImage } from './image';
+import { outboundFetch } from './outbound-fetch';
 import { matchCandidate, parseQuantity } from './matching';
 import type { SearchProduct } from './validation';
 
@@ -71,13 +72,13 @@ export async function verifyImage(
   if (!['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'].includes(model))
     throw new ApiError(503, 'Для проверки разрешены только поддерживаемые Flash-Lite модели.');
   const { mime } = await inspectImage(bytes);
-  const response = await fetch(
+  const response = await outboundFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: 'POST',
       redirect: 'error',
       cache: 'no-store',
-      signal: AbortSignal.timeout(25_000),
+      timeoutMs: 25_000,
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         systemInstruction: {

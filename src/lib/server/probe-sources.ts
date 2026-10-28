@@ -3,6 +3,7 @@ import { sourceFailureDetails, sourceReason, isSourceFailure } from '../source-s
 import { obj, safeUrl } from './catalog-utils';
 import { readBody } from './http';
 import { USER_AGENT } from './public-fetch';
+import { outboundFetch } from './outbound-fetch';
 import {
   ZAKAZ_STORES,
   zakazCandidates,
@@ -159,7 +160,6 @@ export async function probeSources(
 ) {
   const startedAt = performance.now();
   const env = options.env ?? process.env;
-  const request = options.fetch ?? fetch;
   const sleep = options.sleep ?? ((ms) => new Promise<void>((done) => setTimeout(done, ms)));
   // Local pacing only: a diagnostic must not consult caches, shared quotas or circuit breakers.
   const hosts = new Map<string, { tail: Promise<void>; started: number }>();
@@ -177,15 +177,19 @@ export async function probeSources(
       const wait = state.started + source.interval - Date.now();
       if (wait > 0) await sleep(wait);
       state.started = Date.now();
-      const response = await request(url, {
-        headers: {
-          'User-Agent': env.OPENFOODFACTS_USER_AGENT || USER_AGENT,
-          ...(source.token ? { Authorization: `Bearer ${source.token}` } : {}),
+      const response = await outboundFetch(
+        url,
+        {
+          headers: {
+            'User-Agent': env.OPENFOODFACTS_USER_AGENT || USER_AGENT,
+            ...(source.token ? { Authorization: `Bearer ${source.token}` } : {}),
+          },
+          timeoutMs: options.timeoutMs ?? 15_000,
+          redirect: source.token ? 'error' : 'follow',
+          cache: 'no-store',
         },
-        signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
-        redirect: source.token ? 'error' : 'follow',
-        cache: 'no-store',
-      });
+        options.fetch,
+      );
       return response;
     } finally {
       release();

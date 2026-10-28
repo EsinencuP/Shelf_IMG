@@ -2,10 +2,10 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { ApiError } from './http';
+import { outboundFetch } from './outbound-fetch';
 
 export const MAX_IMAGE_BYTES = 4_000_000;
-export const USER_AGENT =
-  'ShelfProductImages/0.1 (local planogram preparation; https://openfoodfacts.org)';
+export { USER_AGENT } from './outbound-fetch';
 export interface Address {
   address: string;
   family: number;
@@ -26,6 +26,8 @@ export interface GetOptions {
   body?: string;
   headers?: Record<string, string>;
   followRedirects?: boolean;
+  referer?: string;
+  signal?: AbortSignal;
 }
 export type Transport = (
   url: URL,
@@ -102,11 +104,14 @@ export function validatePublicUrl(value: string): URL {
 export async function resolvePublicUrl(
   value: string,
   resolver: Resolver = async (host) => lookup(host, { all: true, verbatim: true }),
+  signal?: AbortSignal,
 ): Promise<{ url: URL; address: Address }> {
+  signal?.throwIfAborted();
   const url = validatePublicUrl(value);
   const host = url.hostname.replace(/^\[|\]$/g, '');
   let timer: ReturnType<typeof setTimeout> | undefined;
   let addresses: Address[];
+  let onAbort: (() => void) | undefined;
   try {
     addresses = isIP(host)
       ? [{ address: host, family: isIP(host) }]
@@ -118,10 +123,16 @@ export async function resolvePublicUrl(
               8_000,
             );
             timer.unref();
+            if (signal) {
+              onAbort = () => reject(signal.reason);
+              signal.addEventListener('abort', onAbort, { once: true });
+              if (signal.aborted) onAbort();
+            }
           }),
         ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
   if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address)))
     throw new ApiError(422, 'DNS указывает на внутренний или служебный адрес.');
@@ -143,12 +154,8 @@ const transport: Transport = (url, address, options) =>
       {
         method: options.method || 'GET',
         agent: false,
-        headers: {
-          'User-Agent': options.userAgent || USER_AGENT,
-          Accept: options.accept || 'image/jpeg,image/png,image/webp',
-          'Accept-Encoding': 'identity',
-          ...options.headers,
-        },
+        headers: options.headers,
+        signal: options.signal,
         // Pin the socket to the address validated above, preserving hostname and TLS verification.
         lookup: (_hostname, lookupOptions, callback) => {
           if (lookupOptions.all)
@@ -199,12 +206,6 @@ const transport: Transport = (url, address, options) =>
         });
       },
     );
-    const timer = setTimeout(() => {
-      req.destroy();
-      fail(new ApiError(504, 'Источник не ответил вовремя.'));
-    }, options.timeoutMs ?? 12_000);
-    timer.unref();
-    req.on('close', () => clearTimeout(timer));
     req.on('error', fail);
     req.end(options.body);
   });
@@ -216,13 +217,36 @@ export async function publicGet(
 ): Promise<PublicResponse> {
   let current = value;
   for (let hop = 0; hop <= 3; hop++) {
-    const { url, address } = await resolvePublicUrl(current, dependencies.resolver);
-    const result = await (dependencies.transport || transport)(url, address, options);
+    const { url, address } = await resolvePublicUrl(current, dependencies.resolver, options.signal);
+    const result = await outboundFetch(
+        url,
+        {
+          timeoutMs: options.timeoutMs,
+          userAgent: options.userAgent,
+          referer: options.referer ? validatePublicUrl(options.referer).href : undefined,
+          signal: options.signal,
+          method: options.method,
+          body: options.body,
+          headers: {
+            Accept: options.accept || 'image/jpeg,image/png,image/webp',
+            'Accept-Encoding': 'identity',
+            ...options.headers,
+          },
+        },
+        (_url, init) =>
+          (dependencies.transport || transport)(url, address, {
+            ...options,
+            headers: init.headers,
+            signal: init.signal,
+          }),
+      );
     if ([301, 302, 303, 307, 308].includes(result.status)) {
       if (
         options.followRedirects === false ||
         options.method === 'POST' ||
-        options.headers?.Authorization
+        ['authorization', 'x-subscription-token', 'cookie', 'x-goog-api-key', 'x-secret'].some(
+          (name) => new Headers(options.headers).has(name),
+        )
       )
         throw new ApiError(502, 'Перенаправление сервисного API запрещено.');
       if (!result.headers.location || hop === 3)

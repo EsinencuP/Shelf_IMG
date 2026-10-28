@@ -35,7 +35,12 @@ describe('service transport boundaries', () => {
       expect.objectContaining({
         method: 'POST',
         redirect: 'error',
-        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({
+          authorization: 'Bearer secret',
+          'content-type': 'application/json',
+          referer: 'http://127.0.0.1:8080/',
+          'user-agent': expect.stringContaining('ShelfProductImages/'),
+        }),
       }),
     ]);
     fetcher.mockResolvedValue(

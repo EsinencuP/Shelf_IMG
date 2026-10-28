@@ -1,6 +1,7 @@
 import { ApiError, readBody } from './http';
 import { obj } from './catalog-utils';
 import { publicGet, validatePublicUrl } from './public-fetch';
+import { outboundFetch } from './outbound-fetch';
 
 /** Backend addresses are deployment settings, never client input. */
 export function serviceEndpoint(base: string, path: string): URL {
@@ -37,13 +38,13 @@ export async function serviceJson(
     process.env.NODE_ENV !== 'production' &&
     ['127.0.0.1', '[::1]'].includes(url.hostname)
   ) {
-    const response = await fetch(url, {
+    const response = await outboundFetch(url, {
       method: body === undefined ? 'GET' : 'POST',
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: 'no-store',
       redirect: 'error',
-      signal: AbortSignal.timeout(timeoutMs),
+      timeoutMs,
     });
     status = response.status;
     data = await readBody(response, maxBytes);

@@ -133,7 +133,7 @@ describe('source probe', () => {
     expect(String(tavilyCalls[0][0])).toBe('https://api.tavily.com/usage');
     const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
     expect(calls.find(([url]) => url.includes('tavily.com'))?.[1]).toMatchObject({
-      headers: { Authorization: 'Bearer tavily-secret' },
+      headers: { authorization: 'Bearer tavily-secret' },
       redirect: 'error',
     });
     expect(new URL(calls.find(([url]) => url.includes('localhost'))![0]).pathname).toBe(
