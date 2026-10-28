@@ -76,5 +76,14 @@ Remove-Item -LiteralPath relay-request.json
 Remove-Variable relayToken
 ```
 
-Сервис пока доступен на loopback. Для доступа Vercel к нему понадобится отдельная
-настройка HTTPS-туннеля и подключение relay к каскаду поиска.
+Сервис доступен на loopback. Для доступа Vercel настройте HTTPS-туннель, затем
+задайте в окружении приложения `RELAY_URL=https://pc.tailnet.ts.net` (база, без
+`/fetch`) и тот же `RELAY_TOKEN`. Для локальной проверки приложения используйте
+`RELAY_URL=http://127.0.0.1:8787`. Эти переменные находятся в `.env.local` приложения
+или Vercel env; настройки самого сервера остаются в `infra/relay/.env.local`.
+
+Приложение повторяет заблокированный GET один раз через relay. Сам relay всегда
+загружает напрямую, даже если в его окружении присутствует `RELAY_URL`.
+Ответы сервиса отмечены `X-Shelf-Relay: 1`; заголовки `X-Shelf-Upstream-*`
+присутствуют только при полученном HTTP-ответе источника.
+[Политика повторов и статус relay_offline](../../docs/OUTBOUND-FETCH.md).

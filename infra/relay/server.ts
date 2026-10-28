@@ -67,7 +67,7 @@ export function createRelayHandler(
   dependencies: { resolver?: Resolver; transport?: Transport } = {},
 ): (request: Request) => Promise<Response> {
   const tokenHash = createHash('sha256').update(config.token).digest();
-  return async (request) => {
+  const handle = async (request: Request): Promise<Response> => {
     try {
       const supplied =
         /^Bearer ([^\s]+)$/i.exec(request.headers.get('authorization') || '')?.[1] || '';
@@ -104,6 +104,7 @@ export function createRelayHandler(
             method: 'GET',
             allowedHosts: config.allowedHosts,
             cloudFallback: false,
+            relay: false,
             maxBytes: config.maxBytes,
             timeoutMs: config.timeoutMs,
             // Bounds DNS + all redirect hops, in addition to the per-request timeout.
@@ -139,6 +140,11 @@ export function createRelayHandler(
         response.headers.set('WWW-Authenticate', 'Bearer realm="Shelf relay"');
       return response;
     }
+  };
+  return async (request) => {
+    const response = await handle(request);
+    response.headers.set('X-Shelf-Relay', '1');
+    return response;
   };
 }
 

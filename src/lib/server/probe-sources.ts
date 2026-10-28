@@ -185,6 +185,7 @@ export async function probeSources(
             ...(source.token ? { Authorization: `Bearer ${source.token}` } : {}),
           },
           timeoutMs: options.timeoutMs ?? 15_000,
+          relay: false,
           redirect: source.token ? 'error' : 'follow',
           cache: 'no-store',
         },
