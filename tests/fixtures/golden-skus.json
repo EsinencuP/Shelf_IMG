@@ -1,0 +1,6 @@
+{
+  "$schema": "./golden-skus.schema.json",
+  "version": 1,
+  "status": "pending-owner-input",
+  "skus": []
+}

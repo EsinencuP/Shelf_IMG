@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Shelf Studio golden SKU set",
+  "description": "Owner-provided products and verified reference photos. A ready set contains exactly 20 distinct GTINs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "version", "status", "skus"],
+  "properties": {
+    "$schema": { "const": "./golden-skus.schema.json" },
+    "version": { "const": 1 },
+    "status": { "enum": ["pending-owner-input", "ready"] },
+    "skus": {
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/sku" }
+    }
+  },
+  "if": { "properties": { "status": { "const": "ready" } }, "required": ["status"] },
+  "then": { "properties": { "skus": { "type": "array", "minItems": 20 } } },
+  "definitions": {
+    "sku": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ean", "nameRu", "nameRo", "quantity", "imageUrl"],
+      "properties": {
+        "ean": {
+          "type": "string",
+          "description": "GTIN as digits only; the validator also checks the GS1 check digit and normalized uniqueness.",
+          "pattern": "^(?:[0-9]{8}|[0-9]{12}|[0-9]{13}|[0-9]{14})$",
+          "not": { "pattern": "^0+$" }
+        },
+        "nameRu": { "$ref": "#/definitions/name" },
+        "nameRo": { "$ref": "#/definitions/name" },
+        "quantity": { "$ref": "#/definitions/shortText" },
+        "brand": { "$ref": "#/definitions/shortText" },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "format": "uri",
+          "pattern": "^https://[^\\s]+$",
+          "description": "Direct HTTPS photo URL visually confirmed by the owner; no network requests during validation."
+        }
+      }
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^\\S(?:[^\\u0000-\\u001f]*\\S)?$"
+    },
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^\\S(?:[^\\u0000-\\u001f]*\\S)?$"
+    }
+  }
+}
