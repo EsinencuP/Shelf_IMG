@@ -28,6 +28,10 @@ export interface GetOptions {
   followRedirects?: boolean;
   referer?: string;
   signal?: AbortSignal;
+  /** Exact hostnames, checked before DNS on every redirect hop. */
+  allowedHosts?: ReadonlySet<string>;
+  /** Disable secondary egress when this process is itself a relay. */
+  cloudFallback?: boolean;
 }
 export type Transport = (
   url: URL,
@@ -217,29 +221,35 @@ export async function publicGet(
 ): Promise<PublicResponse> {
   let current = value;
   for (let hop = 0; hop <= 3; hop++) {
+    const target = validatePublicUrl(current);
+    if (
+      options.allowedHosts &&
+      !options.allowedHosts.has(target.hostname.toLowerCase().replace(/\.$/, ''))
+    )
+      throw new ApiError(403, 'Домен источника не разрешён.');
     const { url, address } = await resolvePublicUrl(current, dependencies.resolver, options.signal);
     const result = await outboundFetch(
-        url,
-        {
-          timeoutMs: options.timeoutMs,
-          userAgent: options.userAgent,
-          referer: options.referer ? validatePublicUrl(options.referer).href : undefined,
-          signal: options.signal,
-          method: options.method,
-          body: options.body,
-          headers: {
-            Accept: options.accept || 'image/jpeg,image/png,image/webp',
-            'Accept-Encoding': 'identity',
-            ...options.headers,
-          },
+      url,
+      {
+        timeoutMs: options.timeoutMs,
+        userAgent: options.userAgent,
+        referer: options.referer ? validatePublicUrl(options.referer).href : undefined,
+        signal: options.signal,
+        method: options.method,
+        body: options.body,
+        headers: {
+          Accept: options.accept || 'image/jpeg,image/png,image/webp',
+          'Accept-Encoding': 'identity',
+          ...options.headers,
         },
-        (_url, init) =>
-          (dependencies.transport || transport)(url, address, {
-            ...options,
-            headers: init.headers,
-            signal: init.signal,
-          }),
-      );
+      },
+      (_url, init) =>
+        (dependencies.transport || transport)(url, address, {
+          ...options,
+          headers: init.headers,
+          signal: init.signal,
+        }),
+    );
     if ([301, 302, 303, 307, 308].includes(result.status)) {
       if (
         options.followRedirects === false ||
