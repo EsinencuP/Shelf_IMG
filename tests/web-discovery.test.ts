@@ -74,6 +74,10 @@ it('keeps a later quota failure after an earlier successful web query', async ()
   expect(response.diagnostics.find((row) => row.id === 'brave')).toMatchObject({
     status: 'quota',
     reason: 'Бесплатная квота исчерпана.',
+    attempts: [
+      { query: `"${product.ean}"`, status: 'ok', count: 1 },
+      { status: 'quota', count: 0, httpStatus: 429 },
+    ],
   });
 });
 

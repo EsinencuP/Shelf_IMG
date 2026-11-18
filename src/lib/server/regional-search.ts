@@ -1,6 +1,6 @@
 import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
 import { load } from 'cheerio/slim';
-import type { Candidate, SearchDiagnostic } from '../types';
+import type { Candidate, SearchAttempt, SearchDiagnostic } from '../types';
 import {
   candidateId,
   catalogProducts,
@@ -14,6 +14,7 @@ import { nativeQueries, canonicalText, titleRelevance, withMarketName } from './
 import { normalizeGtin, type SearchProduct } from './validation';
 import { matchCandidate } from './matching';
 import { ApiError } from './http';
+import { recordSearchAttempt } from './search-attempt';
 import type { SupplierMarket } from '../search-sources';
 
 class PartialCatalogFailure extends Error {
@@ -132,20 +133,28 @@ function relevant(
 async function searchZakaz(
   product: SearchProduct,
   source: (typeof ZAKAZ_STORES)[number],
+  attempts: SearchAttempt[],
   marketName?: string,
 ): Promise<Candidate[]> {
   const result = new Map<string, Candidate>();
   const discovery = withMarketName(product, marketName);
   try {
     for (const query of nativeQueries(discovery)) {
-      const data = await publicJson(
-        `https://${source.api}/stores/${source.store}/products/search/?${new URLSearchParams({ q: query })}`,
-        800,
+      const found = await recordSearchAttempt(
+        attempts,
+        query,
+        async () => {
+          const data = await publicJson(
+            `https://${source.api}/stores/${source.store}/products/search/?${new URLSearchParams({ q: query })}`,
+            800,
+          );
+          if (!Array.isArray(obj(data).results))
+            throw new ApiError(502, 'Каталог вернул некорректную выдачу.');
+          return relevant(product, zakazCandidates(data, source), discovery);
+        },
+        (results) => results.length,
       );
-      if (!Array.isArray(obj(data).results))
-        throw new ApiError(502, 'Каталог вернул некорректную выдачу.');
-      for (const candidate of relevant(product, zakazCandidates(data, source), discovery))
-        result.set(candidate.imageUrl, candidate);
+      for (const candidate of found) result.set(candidate.imageUrl, candidate);
       if (
         product.ean &&
         [...result.values()].some(
@@ -181,18 +190,28 @@ export function linellaLinks(
   return result;
 }
 
-async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
+async function searchLinella(
+  product: SearchProduct,
+  attempts: SearchAttempt[],
+): Promise<Candidate[]> {
   const links = new Map<string, { title: string; url: string; thumbnail: string }>();
   let failedSearch: PromiseRejectedResult | undefined;
   for (const query of nativeQueries(product).slice(0, 3)) {
-    const html = await publicHtml(
-      `https://linella.md/?${new URLSearchParams({ dispatch: 'products.search', q: query, search_performed: 'Y', sl: /[а-я]/i.test(query) ? 'ru' : 'ro' })}`,
+    const pageLinks = await recordSearchAttempt(
+      attempts,
+      query,
+      async () => {
+        const html = await publicHtml(
+          `https://linella.md/?${new URLSearchParams({ dispatch: 'products.search', q: query, search_performed: 'Y', sl: /[а-я]/i.test(query) ? 'ru' : 'ro' })}`,
+        );
+        return linellaLinks(html, 'https://linella.md/');
+      },
+      (results) => results.length,
     ).catch((reason: unknown) => {
       failedSearch = { status: 'rejected', reason };
       return null;
     });
-    if (html === null) break;
-    const pageLinks = linellaLinks(html, 'https://linella.md/');
+    if (pageLinks === null) break;
     for (const link of pageLinks) {
       const item: Candidate = {
         id: candidateId(link.url),
@@ -218,13 +237,20 @@ async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
     .sort((a, b) => titleRelevance(product, b.title) - titleRelevance(product, a.title))
     .slice(0, 3);
   const results = await Promise.allSettled(
-    ordered.map(async (link) => {
-      const html = await publicHtml(link.url);
-      return catalogProducts(html, link.url, product, true).map((item) => ({
-        ...item,
-        source: 'Linella',
-      }));
-    }),
+    ordered.map((link) =>
+      recordSearchAttempt(
+        attempts,
+        new URL(link.url).pathname,
+        async () => {
+          const html = await publicHtml(link.url);
+          return catalogProducts(html, link.url, product, true).map((item) => ({
+            ...item,
+            source: 'Linella',
+          }));
+        },
+        (results) => results.length,
+      ),
+    ),
   );
   if (failedSearch) results.unshift(failedSearch);
   return collectCards(results);
@@ -301,22 +327,39 @@ export function bucuriaProductCandidates(html: string, pageUrl: string): Candida
   return items;
 }
 
-async function searchBucuria(product: SearchProduct): Promise<Candidate[]> {
+async function searchBucuria(
+  product: SearchProduct,
+  attempts: SearchAttempt[],
+): Promise<Candidate[]> {
   if (!/bucuria|букурия/i.test(`${product.brand} ${product.nameRo} ${product.nameRu}`)) return [];
   const names = nativeQueries(product).filter((query) => !/^[\d]+$/.test(query));
   const query = (names[0] || product.brand).replace(/bucuria|букурия/gi, '').trim();
   if (!query) return [];
-  const html = await publicHtml(
-    `https://www.bucuria.md/ru/search?${new URLSearchParams({ s: query })}`,
+  const links = await recordSearchAttempt(
+    attempts,
+    query,
+    async () => {
+      const html = await publicHtml(
+        `https://www.bucuria.md/ru/search?${new URLSearchParams({ s: query })}`,
+      );
+      return bucuriaLinks(html)
+        .filter((link) => titleRelevance(product, `Bucuria ${link.title}`) >= 0.35)
+        .slice(0, 2);
+    },
+    (results) => results.length,
   );
-  const links = bucuriaLinks(html)
-    .filter((link) => titleRelevance(product, `Bucuria ${link.title}`) >= 0.35)
-    .slice(0, 2);
   const results = await Promise.allSettled(
-    links.map(async (link) => {
-      const page = await publicHtml(link.url);
-      return relevant(product, bucuriaProductCandidates(page, link.url));
-    }),
+    links.map((link) =>
+      recordSearchAttempt(
+        attempts,
+        new URL(link.url).pathname,
+        async () => {
+          const page = await publicHtml(link.url);
+          return relevant(product, bucuriaProductCandidates(page, link.url));
+        },
+        (results) => results.length,
+      ),
+    ),
   );
   return collectCards(results);
 }
@@ -331,15 +374,24 @@ export async function searchRegionalSources(
     ...ZAKAZ_STORES.map((source) => ({
       id: source.id,
       name: source.name,
-      run: () =>
+      run: (attempts: SearchAttempt[]) =>
         searchZakaz(
           product,
           source,
+          attempts,
           market === 'UA' && source.id.endsWith('-ua') ? marketName : undefined,
         ),
     })),
-    { id: 'linella', name: 'Linella', run: () => searchLinella(product) },
-    { id: 'bucuria', name: 'Bucuria — производитель', run: () => searchBucuria(product) },
+    {
+      id: 'linella',
+      name: 'Linella',
+      run: (attempts: SearchAttempt[]) => searchLinella(product, attempts),
+    },
+    {
+      id: 'bucuria',
+      name: 'Bucuria — производитель',
+      run: (attempts: SearchAttempt[]) => searchBucuria(product, attempts),
+    },
   ];
   const diagnostics: SearchDiagnostic[] = [];
   const candidates: Candidate[] = [];
@@ -347,6 +399,7 @@ export async function searchRegionalSources(
   await Promise.all(
     jobs.map(async (job) => {
       const start = Date.now();
+      const attempts: SearchAttempt[] = [];
       const sourceMarket: 'UA' | 'MD' = job.id.endsWith('-ua') ? 'UA' : 'MD';
       try {
         if ((mode === 'moldova' || (market && market !== 'UA')) && sourceMarket === 'UA') {
@@ -378,7 +431,7 @@ export async function searchRegionalSources(
           );
           return;
         }
-        const result = await job.run();
+        const result = await job.run(attempts);
         candidates.push(...result.map<Candidate>((candidate) => ({ ...candidate, sourceMarket })));
         diagnostics.push(
           sourceDiagnostic({
@@ -387,6 +440,8 @@ export async function searchRegionalSources(
             status: 'ok',
             count: result.length,
             elapsedMs: Date.now() - start,
+            requests: attempts.length,
+            attempts,
           }),
         );
       } catch (error) {
@@ -403,6 +458,8 @@ export async function searchRegionalSources(
             source: job.name,
             count: error instanceof PartialCatalogFailure ? error.candidates.length : 0,
             elapsedMs: Date.now() - start,
+            requests: attempts.length,
+            attempts,
             message: error instanceof Error ? error.message : 'Источник временно недоступен.',
             ...sourceFailureDetails(error instanceof PartialCatalogFailure ? error.failure : error),
           }),

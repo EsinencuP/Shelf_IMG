@@ -4,6 +4,7 @@ import {
   DEFAULT_SEARCH_OPTIONS,
   type Candidate,
   type SearchDiagnostic,
+  type SearchAttempt,
   type SearchResponse,
   type SearchOptions,
   type SourcePhotoCheck,
@@ -30,6 +31,7 @@ import { REGIONAL_SOURCES, OPEN_CATALOGS } from '../search-sources';
 import { checkSourcePhoto } from './source-photo';
 import { abortable, currentSearchSignal, inSearch, waitForSource } from './search-signal';
 import { sourceFailure } from './source-policy';
+import { recordSearchAttempt } from './search-attempt';
 
 export const SEARCH_DEADLINE_MS = 90_000;
 
@@ -413,8 +415,14 @@ async function runSearchProducts(
   const run = async (id: string, source: string, job: () => Promise<Candidate[]>) => {
     if (signal.aborted) return;
     const start = Date.now();
+    const attempts: SearchAttempt[] = [];
     try {
-      const found = await abortable(job(), signal);
+      const found = await recordSearchAttempt(
+        attempts,
+        product.ean,
+        () => abortable(job(), signal),
+        (results) => results.length,
+      );
       candidates.push(...found);
       diagnostics.push(
         sourceDiagnostic({
@@ -423,6 +431,7 @@ async function runSearchProducts(
           status: 'ok',
           count: found.length,
           elapsedMs: Date.now() - start,
+          attempts,
         }),
       );
     } catch (error) {
@@ -432,6 +441,7 @@ async function runSearchProducts(
           source,
           count: 0,
           elapsedMs: Date.now() - start,
+          attempts,
           message: error instanceof Error ? error.message : 'Источник временно недоступен.',
           ...sourceFailureDetails(error),
         }),

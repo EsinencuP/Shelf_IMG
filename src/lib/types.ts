@@ -138,18 +138,22 @@ export interface SearchResponse {
 export type SourceStatus =
   'ok' | 'empty' | 'blocked' | 'timeout' | 'quota' | 'parse_error' | 'disabled' | 'relay_offline';
 
-export interface SearchDiagnostic {
-  id: string;
-  source: string;
+export interface SearchAttempt {
+  query: string;
   status: SourceStatus;
   count: number;
   elapsedMs: number;
-  requests?: number;
-  message?: string;
-  /** Human-readable reason; optional only for older saved batches. */
   reason?: string;
   httpStatus?: number;
   retryAfterMs?: number;
+}
+
+export interface SearchDiagnostic extends Omit<SearchAttempt, 'query'> {
+  id: string;
+  source: string;
+  requests?: number;
+  message?: string;
+  attempts?: SearchAttempt[];
 }
 export interface AppConfig {
   braveConfigured: boolean;

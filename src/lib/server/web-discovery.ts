@@ -1,6 +1,6 @@
 import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
 import { createHash } from 'node:crypto';
-import type { Candidate, SearchDiagnostic } from '../types';
+import type { Candidate, SearchAttempt, SearchDiagnostic } from '../types';
 import { ApiError } from './http';
 import { candidateId, obj, safeUrl, str, zakazProductGtin } from './catalog-utils';
 import { discoverPage } from './page-discovery';
@@ -17,6 +17,7 @@ import {
 import { extractedPageEvidence } from './extracted-page';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { SUPPLIER_MARKETS, type SupplierMarket } from '../search-sources';
+import { recordSearchAttempt } from './search-attempt';
 export const WEB_PROVIDER_IDS = ['brave', 'tavily'] as const;
 export type WebProvider = (typeof WEB_PROVIDER_IDS)[number];
 export const WEB_PROVIDER_NAMES = { brave: 'Brave Search', tavily: 'Tavily Free' };
@@ -170,6 +171,7 @@ export async function searchWebDiscovery(
     if (searches >= cap) break;
     const started = Date.now();
     const found: Candidate[] = [];
+    const attempts: SearchAttempt[] = [];
     let requests = 0,
       completed = 0,
       failure = '';
@@ -236,65 +238,78 @@ export async function searchWebDiscovery(
               : selectedMarket
                 ? rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '')
                 : rawQuery;
-        let data: Record<string, unknown>;
         requests++;
-        if (provider === 'brave') {
-          await reserveSource('api.search.brave.com', 1100);
-          const endpoint = new URL('https://api.search.brave.com/res/v1/web/search');
-          endpoint.search = new URLSearchParams({
-            q: query,
-            count: '10',
-            country: 'ALL',
-            safesearch: 'strict',
-            spellcheck: 'false',
-          }).toString();
-          searches++;
-          const raw = await serviceJson(
-            endpoint,
-            key,
-            undefined,
-            10000,
-            1500000,
-            'X-Subscription-Token',
-          );
-          // Brave omits the nullable web field on a valid zero-result response.
-          data = {
-            results:
-              raw.web == null && (raw.type === 'search' || raw.query) ? [] : obj(raw.web).results,
-          };
-        } else {
-          await reserveSource('api.tavily.com', 1100);
-          searches++;
-          data = await serviceJson(new URL('https://api.tavily.com/search'), key, {
-            query,
-            search_depth: 'basic',
-            topic: 'general',
-            max_results: mode === 'moldova' ? 8 : 6,
-            auto_parameters: false,
-            include_answer: false,
-            include_raw_content: false,
-            // Tavily's image search can replace useful product-page results with
-            // broad image matches. Regional recovery needs canonical pages first;
-            // Extract obtains their actual photos below.
-            include_images: mode !== 'moldova',
-            ...(mode === 'moldova' ? {} : { include_image_descriptions: true }),
-            include_usage: true,
-            ...(marketConfig
-              ? {
-                  country: marketConfig.country,
-                  ...(nameQuery ? { language: marketConfig.language } : {}),
-                }
-              : {}),
-            ...(scopeDomains.length
-              ? {
-                  include_domains: [...scopeDomains],
-                  include_domains_mode: marketConfig ? 'restrict' : 'prefer',
-                }
-              : {}),
-          });
-        }
-        if (!Array.isArray(data.results))
-          throw new ApiError(502, WEB_PROVIDER_NAMES[provider] + ' вернул некорректную выдачу.');
+        const data = await recordSearchAttempt(
+          attempts,
+          query,
+          async () => {
+            let data: Record<string, unknown>;
+            if (provider === 'brave') {
+              await reserveSource('api.search.brave.com', 1100);
+              const endpoint = new URL('https://api.search.brave.com/res/v1/web/search');
+              endpoint.search = new URLSearchParams({
+                q: query,
+                count: '10',
+                country: 'ALL',
+                safesearch: 'strict',
+                spellcheck: 'false',
+              }).toString();
+              searches++;
+              const raw = await serviceJson(
+                endpoint,
+                key,
+                undefined,
+                10000,
+                1500000,
+                'X-Subscription-Token',
+              );
+              // Brave omits the nullable web field on a valid zero-result response.
+              data = {
+                results:
+                  raw.web == null && (raw.type === 'search' || raw.query)
+                    ? []
+                    : obj(raw.web).results,
+              };
+            } else {
+              await reserveSource('api.tavily.com', 1100);
+              searches++;
+              data = await serviceJson(new URL('https://api.tavily.com/search'), key, {
+                query,
+                search_depth: 'basic',
+                topic: 'general',
+                max_results: mode === 'moldova' ? 8 : 6,
+                auto_parameters: false,
+                include_answer: false,
+                include_raw_content: false,
+                // Tavily's image search can replace useful product-page results with
+                // broad image matches. Regional recovery needs canonical pages first;
+                // Extract obtains their actual photos below.
+                include_images: mode !== 'moldova',
+                ...(mode === 'moldova' ? {} : { include_image_descriptions: true }),
+                include_usage: true,
+                ...(marketConfig
+                  ? {
+                      country: marketConfig.country,
+                      ...(nameQuery ? { language: marketConfig.language } : {}),
+                    }
+                  : {}),
+                ...(scopeDomains.length
+                  ? {
+                      include_domains: [...scopeDomains],
+                      include_domains_mode: marketConfig ? 'restrict' : 'prefer',
+                    }
+                  : {}),
+              });
+            }
+            if (!Array.isArray(data.results))
+              throw new ApiError(
+                502,
+                WEB_PROVIDER_NAMES[provider] + ' вернул некорректную выдачу.',
+              );
+            return { results: data.results, images: data.images };
+          },
+          (response) => response.results.length,
+        );
         completed++;
         const pageResults = data.results;
         for (const entry of data.results.slice(0, 12)) {
@@ -445,6 +460,7 @@ export async function searchWebDiscovery(
         count: found.length,
         elapsedMs: Date.now() - started,
         requests,
+        ...(attempts.length ? { attempts } : {}),
         message:
           failure ||
           (provider === 'brave'

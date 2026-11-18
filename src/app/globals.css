@@ -96,6 +96,10 @@
 .search-diagnostics small {
   width: 100%;
 }
+.source-attempts {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 650px) {
   .regional-source-list {
     grid-template-columns: 1fr;

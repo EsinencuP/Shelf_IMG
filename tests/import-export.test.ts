@@ -227,6 +227,20 @@ describe('Auditable export', () => {
       row.outputBlob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
     }
     rows[2].status = 'not_found';
+    rows[2].searchDiagnostics = [
+      {
+        id: 'linella',
+        source: 'Linella',
+        status: 'timeout',
+        count: 0,
+        elapsedMs: 802,
+        requests: 2,
+        attempts: [
+          { query: 'Сок', status: 'empty', count: 0, elapsedMs: 2 },
+          { query: 'Suc', status: 'timeout', count: 0, elapsedMs: 800, httpStatus: 504 },
+        ],
+      },
+    ];
     rows[3].rightsConfirmed = false;
     const batch: Batch = {
       id: 'batch',
@@ -243,7 +257,12 @@ describe('Auditable export', () => {
     const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
     expect(manifest.rows).toHaveLength(4);
     expect(manifest.exportedImages).toBe(2);
-    expect(manifest.rows[2]).toMatchObject({ sourceRow: 4, exported: false, fileName: null });
+    expect(manifest.rows[2]).toMatchObject({
+      sourceRow: 4,
+      exported: false,
+      fileName: null,
+      searchDiagnostics: rows[2].searchDiagnostics,
+    });
     expect(manifest.rows[3].exclusionReason).toContain('Право');
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load((await zip.file('report.xlsx')!.async('nodebuffer')) as never);

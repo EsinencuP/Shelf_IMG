@@ -1,7 +1,8 @@
 import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
-import type { Candidate, SearchDiagnostic } from '../types';
+import type { Candidate, SearchAttempt, SearchDiagnostic } from '../types';
 import { obj, str, safeUrl, candidateId, publicJson } from './catalog-utils';
 import { normalizeGtin, type SearchProduct } from './validation';
+import { recordSearchAttempt } from './search-attempt';
 
 import { OPEN_CATALOGS } from '../search-sources';
 export { OPEN_CATALOGS } from '../search-sources';
@@ -139,8 +140,14 @@ export async function searchSupplementalCatalogs(
   await Promise.all(
     jobs.map(async (job) => {
       const start = Date.now();
+      const attempts: SearchAttempt[] = [];
       try {
-        const result = await job.run();
+        const result = await recordSearchAttempt(
+          attempts,
+          code,
+          job.run,
+          (results) => results.length,
+        );
         candidates.push(...result);
         diagnostics.push(
           sourceDiagnostic({
@@ -150,6 +157,7 @@ export async function searchSupplementalCatalogs(
             count: result.length,
             elapsedMs: Date.now() - start,
             requests: 1,
+            attempts,
           }),
         );
       } catch (error) {
@@ -160,6 +168,7 @@ export async function searchSupplementalCatalogs(
             count: 0,
             elapsedMs: Date.now() - start,
             requests: 1,
+            attempts,
             message: error instanceof Error ? error.message : 'Источник недоступен.',
             ...sourceFailureDetails(error),
           }),

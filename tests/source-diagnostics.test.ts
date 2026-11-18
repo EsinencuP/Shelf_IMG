@@ -90,6 +90,17 @@ it('keeps a METRO Moldova candidate when a later query for the same SKU is block
     status: 'blocked',
     count: 1,
     reason: 'Источник ответил HTTP 403.',
+    requests: 2,
+    attempts: [
+      { query: product.ean, status: 'ok', count: 1, elapsedMs: expect.any(Number) },
+      {
+        query: 'Ferrero Nutella',
+        status: 'blocked',
+        count: 0,
+        httpStatus: 403,
+        elapsedMs: expect.any(Number),
+      },
+    ],
   });
 });
 
@@ -120,5 +131,11 @@ it('reads a Linella card found before a later catalog query times out', async ()
     status: 'timeout',
     count: 1,
     reason: 'Источник не ответил вовремя.',
+    requests: 3,
+    attempts: [
+      { query: product.ean, status: 'ok', count: 1 },
+      { query: 'Ferrero Nutella', status: 'timeout', count: 0 },
+      { query: '/nutella/', status: 'ok', count: 1 },
+    ],
   });
 });

@@ -438,9 +438,29 @@ export default function ReviewPane({
                     ? source.id === 'barcode-identity'
                       ? 'Название найдено'
                       : `${source.count} фото`
-                    : SOURCE_STATUS_LABELS[source.status]}
+                    : SOURCE_STATUS_LABELS[source.status] +
+                      (source.count ? ` · сохранено фото: ${source.count}` : '')}
                 </strong>
                 <small>{source.reason}</small>
+                {!!source.attempts?.length && (
+                  <details className="source-attempts">
+                    <summary>Запросы ({source.attempts.length})</summary>
+                    <ul>
+                      {source.attempts.map((attempt, index) => (
+                        <li key={index}>
+                          <span>{attempt.query}</span>
+                          <small>
+                            {attempt.status === 'ok'
+                              ? `Результатов: ${attempt.count}`
+                              : attempt.reason || SOURCE_STATUS_LABELS[attempt.status]}
+                            {' · '}
+                            {attempt.elapsedMs} мс
+                          </small>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </li>
             ))}
           </ul>
