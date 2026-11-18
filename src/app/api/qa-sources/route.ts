@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const details = {
     region: process.env.VERCEL_REGION ?? null,
     build: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
-    base: '0444d8ec556fc97e4f695346c40e5e6a4ef07c03',
+    base: '111f5515cc10c4d657e9baa7dacc0d5725fbd0b2',
     generatedAt: new Date().toISOString(),
   };
   if (details.region !== 'fra1')
