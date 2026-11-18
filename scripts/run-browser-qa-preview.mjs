@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 const reportPath = resolve('.runtime/browser-qa-results.json');
 const playwright = 'node_modules/@playwright/test/cli.js';
 await mkdir('.runtime', { recursive: true });
-await mkdir('public/qa-browser', { recursive: true });
+await mkdir('qa-browser-results/qa-browser', { recursive: true });
 const env = {
   ...process.env,
   CI: '1',
@@ -31,7 +31,8 @@ function run(args, timeout) {
 const install = run(['install', '--only-shell', 'chromium'], 120_000);
 const test = install.status === 0 ? run(['test', '--reporter=json'], 480_000) : null;
 const reportText = await readFile(reportPath, 'utf8').catch(() => 'null');
-const report = JSON.parse(reportText);
+let report;
+try { report = JSON.parse(reportText); } catch { report = null; }
 const failureTypes = new Set();
 const diagnostics = [install.stdout, install.stderr, test?.stdout, test?.stderr, ...((report?.errors ?? []).map((item) => item.message))].join('\n');
 for (const [label, pattern] of [
@@ -44,7 +45,7 @@ for (const [label, pattern] of [
 
 function failedTests(suites) {
   return suites.flatMap((suite) => [
-    ...suite.specs.filter((spec) => !spec.ok).map((spec) => ({ file: spec.file, title: spec.title })),
+    ...(suite.specs ?? []).filter((spec) => !spec.ok).map((spec) => ({ file: spec.file, title: spec.title })),
     ...failedTests(suite.suites ?? []),
   ]);
 }
@@ -62,5 +63,5 @@ const result = {
   failureTypes: [...failureTypes],
   failedTests: failedTests(report?.suites ?? []),
 };
-await writeFile('public/qa-browser/result.json', JSON.stringify(result) + '\n');
+await writeFile('qa-browser-results/qa-browser/result.json', JSON.stringify(result) + '\n');
 console.log('Browser QA summary:', JSON.stringify(result));

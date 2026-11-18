@@ -1,3 +1,5 @@
 {
-  "buildCommand": "node scripts/run-browser-qa-preview.mjs && npm run build"
+  "framework": null,
+  "buildCommand": "node scripts/run-browser-qa-preview.mjs",
+  "outputDirectory": "qa-browser-results"
 }
