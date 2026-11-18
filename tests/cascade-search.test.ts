@@ -41,19 +41,20 @@ const exact = {
   rights: 'unknown',
   warnings: [],
 };
+const decodedPhoto = {
+  sha256: 'verified',
+  mime: 'image/jpeg',
+  width: 512,
+  height: 512,
+  checkedAt: '2026-11-18T12:00:00.000Z',
+};
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv('DATABASE_URL', '');
   mocks.regional.mockResolvedValue({ candidates: [], diagnostics: [] });
   mocks.providers.mockReturnValue([]);
   mocks.supplemental.mockResolvedValue({ candidates: [], diagnostics: [] });
-  mocks.checkPhoto.mockResolvedValue({
-    sha256: 'verified',
-    mime: 'image/jpeg',
-    width: 512,
-    height: 512,
-    checkedAt: '2026-11-18T12:00:00.000Z',
-  });
+  mocks.checkPhoto.mockResolvedValue(decodedPhoto);
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response('', { status: 404 })),
@@ -162,11 +163,18 @@ it('cancels in-flight catalog work immediately when the requester leaves', async
 });
 it('stops after an exact EAN match before other catalogues and web credits', async () => {
   vi.stubEnv('SEARCH_CACHE_ENABLED', 'true');
-  mocks.sostavista.mockResolvedValue([exact]);
+  let clock = 100;
+  vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  mocks.sostavista.mockImplementationOnce(async () => {
+    clock += 125;
+    return [exact];
+  });
+  mocks.checkPhoto.mockImplementationOnce(async () => {
+    clock += 75;
+    return decodedPhoto;
+  });
   const result = await searchProducts(product);
-  expect(result.outcome).toBe('found');
-  expect(result.firstUsablePhotoMs).toEqual(expect.any(Number));
-  expect(result.firstUsablePhotoMs!).toBeLessThanOrEqual(result.elapsedMs!);
+  expect(result).toMatchObject({ outcome: 'found', firstUsablePhotoMs: 200, elapsedMs: 200 });
   const cached = await searchProducts(product);
   expect(cached.outcome).toBe('found');
   expect(cached.firstUsablePhotoMs).toBeUndefined();
