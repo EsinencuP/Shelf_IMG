@@ -229,6 +229,23 @@ export default function Workspace() {
     );
   }
 
+  async function commitRow(id: string, patch: Partial<ProductRow>) {
+    const current = batchRef.current;
+    if (!current) throw new Error('Партия недоступна.');
+    const next = {
+      ...current,
+      rows: current.rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    };
+    window.clearTimeout(saveTimerRef.current);
+    await saveBatch(next);
+    if (batchRef.current === current) {
+      changeBatch(next);
+    } else if (batchRef.current?.id === current.id) {
+      patchRow(id, patch);
+      await persistCurrent();
+    }
+  }
+
   useEffect(() => {
     let alive = true;
     const defaults = readPreferences();
@@ -1563,6 +1580,7 @@ export default function Workspace() {
                         disabled={!!operation || activeRow.status === 'searching'}
                         onBusy={setPanelBusy}
                         onPatch={patchRow}
+                        onCommit={commitRow}
                         onClose={() => setActiveId(null)}
                         onNotice={notify}
                         onNext={

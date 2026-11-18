@@ -111,8 +111,10 @@ test('Excel import, manual photo, white crop, approval, reload and auditable ZIP
   await review.getByRole('checkbox').check();
   await review.getByRole('button', { name: 'Подтвердить для экспорта' }).click();
   await expect(review.getByText(/Подтверждено ·/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Открыть 00123', exact: true }).click();
+  await expect(review.getByText(/Подтверждено ·/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('desktop-batch.png'), fullPage: true });
-  // Switch immediately after approval to exercise the debounce-save regression.
   await page.getByRole('button', { name: 'Мои партии', exact: false }).click();
   await page.getByRole('button', { name: 'Открыть', exact: true }).click();
   await page.reload();

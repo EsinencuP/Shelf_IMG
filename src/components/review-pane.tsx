@@ -27,6 +27,7 @@ export default function ReviewPane({
   geminiConfigured,
   databaseConfigured,
   onPatch,
+  onCommit,
   onClose,
   onNotice,
   disabled,
@@ -41,6 +42,7 @@ export default function ReviewPane({
   databaseConfigured?: boolean;
   disabled: boolean;
   onPatch: (id: string, patch: Partial<ProductRow>) => void;
+  onCommit: (id: string, patch: Partial<ProductRow>) => Promise<void>;
   onClose: () => void;
   onNotice: (message: string, error?: boolean) => void;
   onBusy: (busy: boolean) => void;
@@ -131,11 +133,19 @@ export default function ReviewPane({
       }
     } catch (error) {
       saveError = error instanceof Error ? error.message : 'Не удалось сохранить в общий каталог.';
+    }
+    try {
+      await onCommit(row.id, { status: 'ready', confirmed: true, libraryId: savedId });
+    } catch (error) {
+      onNotice(
+        error instanceof Error ? error.message : 'Не удалось сохранить подтверждение.',
+        true,
+      );
+      return;
     } finally {
       working(false);
       setProgress('');
     }
-    patch({ status: 'ready', confirmed: true, libraryId: savedId });
     onNotice(
       saveError
         ? 'Фото добавлено в экспорт. Общий каталог: ' + saveError
