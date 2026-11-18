@@ -6,7 +6,6 @@ import { dirname, join, resolve } from 'node:path';
 import JSZip from 'jszip';
 
 const expected = {
-  "index.mjs": "e2f9f21564a638011793b9e53e40ad408e5adf5e706ffeb05fb074c9e0d1e159",
   "node_modules/@img/sharp-linux-arm64/lib/sharp-linux-arm64-0.35.5.node": "6c3c549bd1bae0fe0b34832917a39950abd4db8feea874f8447ed07cded7854b",
   "node_modules/@img/sharp-libvips-linux-arm64/lib/libvips-cpp.so.8.18.7": "97c2ae9a663cd3de58a34d68820994e49e0e261fddbd4616bd726a72610bbc8f"
 };
@@ -63,7 +62,8 @@ const result = { commit: process.env.VERCEL_GIT_COMMIT_SHA ?? null, host: proces
 try {
   command('npm', ['run', 'worker:build']);
   result.stage = 'archive';
-  const zip = await JSZip.loadAsync(await readFile('.runtime/cloud-worker.zip'), { checkCRC32: true });
+  const archive = await readFile('.runtime/cloud-worker.zip');
+  const zip = await JSZip.loadAsync(archive, { checkCRC32: true });
   const seen = {};
   for (const [path, file] of Object.entries(zip.files)) {
     if (file.dir) continue;
@@ -75,7 +75,9 @@ try {
     await writeFile(destination, bytes);
   }
   assert.deepEqual(seen, expected);
-  result.archiveComponents = seen;
+  result.archiveComponents = { ...seen, 'index.mjs': sha256(await zip.file('index.mjs').async('nodebuffer')) };
+  result.archiveSha256 = sha256(archive);
+  result.releaseSourceCommit = '111f5515cc10c4d657e9baa7dacc0d5725fbd0b2';
   result.stage = 'runtime-download';
   const downloads = await Promise.all([
     ...assets.map(({ url, sha }) => download(url, sha)),
@@ -102,6 +104,7 @@ try {
     timeout: 100_000,
   });
   result.runtime = JSON.parse(data.trim());
+  await writeFile(join(out, 'cloud-worker.zip'), archive);
   result.stage = 'done';
   result.ok = true;
 } catch (error) {

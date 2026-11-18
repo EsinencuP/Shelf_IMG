@@ -384,7 +384,7 @@ async function runSearchProducts(
   suppliedProduct: SearchProduct,
   options: SearchOptions,
   refresh: boolean,
-  started: number,
+  searchStartedAt: number,
   signal: AbortSignal,
 ): Promise<SearchResponse> {
   const diagnostics: SearchDiagnostic[] = [];
@@ -401,10 +401,10 @@ async function runSearchProducts(
       if (!exact(candidate)) continue;
       if (checkedPhotos.get(candidate.imageUrl)) return true;
       if (checkedPhotos.has(candidate.imageUrl) || checkedPhotos.size >= 3) continue;
-      const started = Date.now();
+      const photoStartedAt = performance.now();
       try {
         checkedPhotos.set(candidate.imageUrl, await checkSourcePhoto(candidate));
-        firstUsablePhotoMs ??= Math.max(0, Math.round(performance.now() - started));
+        firstUsablePhotoMs ??= Math.max(0, Math.round(performance.now() - searchStartedAt));
         return true;
       } catch (error) {
         if (!signal.aborted) checkedPhotos.set(candidate.imageUrl, null);
@@ -413,7 +413,7 @@ async function runSearchProducts(
             id: 'image-' + candidate.id,
             source: `Фото · ${candidate.source}`,
             count: 0,
-            elapsedMs: Date.now() - started,
+            elapsedMs: Math.max(0, Math.round(performance.now() - photoStartedAt)),
             ...(error instanceof ApiError && [413, 415, 422].includes(error.status)
               ? { status: 'parse_error', reason: error.message }
               : sourceFailureDetails(error)),
