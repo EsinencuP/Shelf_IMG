@@ -63,6 +63,8 @@ export interface ProductRow {
   qualityWarnings: string[];
   searchDiagnostics?: SearchDiagnostic[];
   searchCoverage?: 'complete' | 'partial';
+  searchElapsedMs?: number;
+  firstUsablePhotoMs?: number;
   lastSearchOptions?: SearchOptions;
   searchJobId?: string;
   searchRequestKey?: string;

@@ -227,6 +227,7 @@ describe('Auditable export', () => {
       row.outputBlob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
     }
     rows[2].status = 'not_found';
+    rows[2].searchElapsedMs = 900;
     rows[2].searchDiagnostics = [
       {
         id: 'linella',
@@ -262,6 +263,8 @@ describe('Auditable export', () => {
       exported: false,
       fileName: null,
       searchDiagnostics: rows[2].searchDiagnostics,
+      searchElapsedMs: 900,
+      firstUsablePhotoMs: null,
     });
     expect(manifest.rows[3].exclusionReason).toContain('Право');
     const workbook = new ExcelJS.Workbook();

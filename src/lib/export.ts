@@ -107,6 +107,8 @@ async function writeExportEntries(batch: Batch, add: AddEntry): Promise<number> 
       vision: row.vision ?? null,
       searchDiagnostics: row.searchDiagnostics ?? [],
       searchCoverage: row.searchCoverage ?? null,
+      searchElapsedMs: row.searchElapsedMs ?? null,
+      firstUsablePhotoMs: row.firstUsablePhotoMs ?? null,
       searchOptions: row.lastSearchOptions ?? null,
       selectedCandidateId: row.selectedCandidateId ?? null,
       libraryId: row.libraryId ?? null,
