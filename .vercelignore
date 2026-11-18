@@ -11,7 +11,6 @@ coverage/
 test-results/
 test-results-image/
 playwright-report/
-tests/
 scripts/validate-golden-skus.ts
 infra/
 worker/

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 
 const reportPath = resolve('.runtime/browser-qa-results.json');
 const playwright = 'node_modules/@playwright/test/cli.js';
@@ -9,6 +10,8 @@ await mkdir('public/qa-browser', { recursive: true });
 const env = {
   ...process.env,
   CI: '1',
+  NODE_ENV: 'development',
+  PORT: '3000',
   NEXT_TELEMETRY_DISABLED: '1',
   MVP_ACCESS_PASSWORD: '',
   DATABASE_URL: '',
@@ -51,6 +54,11 @@ const result = {
   testExitCode: test?.status ?? null,
   timeout: test?.error?.code === 'ETIMEDOUT',
   stats: report?.stats ?? null,
+  specsAvailable: existsSync('tests/workflow-settings.spec.ts'),
+  errors: diagnostics.split('\n').map((line) => line.replace(/\u001b\[[0-9;]*m/g, '').trim())
+    .filter((line) => /Error:|EADDRINUSE|EACCES|EPERM|ENOENT|Timed out|No tests found|Cannot find module|shared object file|libatk-/i.test(line))
+    .filter((line) => !/token|secret|password|credential|authorization/i.test(line))
+    .slice(0, 10).map((line) => line.slice(0, 300)),
   failureTypes: [...failureTypes],
   failedTests: failedTests(report?.suites ?? []),
 };
