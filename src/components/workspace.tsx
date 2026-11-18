@@ -39,15 +39,23 @@ import { DEFAULT_PROFILE, DEFAULT_SEARCH_OPTIONS, STATUS_LABELS } from '@/lib/ty
 import {
   DEFAULT_PREFERENCES,
   readPreferences,
+  restoreSearchOptions,
   savePreferences,
   processingChanged,
   type Preferences,
 } from '@/lib/preferences';
-import { REGIONAL_SOURCES, INDEXED_DOMAINS } from '@/lib/search-sources';
-import { parseFile, downloadTemplate } from '@/lib/import';
+import {
+  REGIONAL_SOURCES,
+  INDEXED_DOMAINS,
+  isSupplierMarket,
+  SUPPLIER_MARKETS,
+} from '@/lib/search-sources';
+import { parseFile, downloadTemplate, MAX_IMPORT_ROWS } from '@/lib/import';
 import { deleteBatch, listBatches, saveBatch } from '@/lib/storage';
 import { exportBatch } from '@/lib/export';
-import { apiFetch, setAccessPassword } from '@/lib/client-api';
+import { apiFetch, ApiRequestError, setAccessPassword } from '@/lib/client-api';
+import { rowSearchError, rowSearchProduct, rowTitle } from '@/lib/row-search';
+import { matchSupplierPhotos, supplierPhotoPatch } from '@/lib/supplier-photos';
 import ImportDialog from './import-dialog';
 import SingleProductDialog from './single-product-dialog';
 import ReviewPane from './review-pane';
@@ -56,6 +64,25 @@ import Modal from './modal';
 
 type Tab = 'workspace' | 'history' | 'sources';
 type Filter = 'all' | 'review' | 'ready' | 'unresolved';
+type ServiceStatus = {
+  id: string;
+  source: string;
+  status: 'ok' | 'unavailable' | 'not_configured';
+  message?: string;
+};
+type SearchServiceStatus = {
+  services: ServiceStatus[];
+  catalogSize?: number;
+  cacheEntries?: number;
+};
+type JobSnapshot = {
+  id: string;
+  status: string;
+  attempts: number;
+  result: SearchResponse;
+  error?: string;
+  available_at: string;
+};
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat('ru', {
     day: 'numeric',
@@ -65,6 +92,35 @@ const formatDate = (value: string) =>
   }).format(new Date(value));
 const errorText = (reason: unknown) =>
   reason instanceof Error ? reason.message : 'Не удалось выполнить действие.';
+
+async function submitQueuedRows(rows: ProductRow[]) {
+  const jobs = rows.map((row) => ({
+    ...rowSearchProduct(row),
+    searchOptions: row.lastSearchOptions,
+    refresh: row.searchRefresh,
+    requestKey: row.searchRequestKey,
+  }));
+  const response = await apiFetch('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(jobs.length === 1 ? jobs[0] : { jobs }),
+  });
+  const result = await response.json();
+  const ids =
+    jobs.length === 1
+      ? new Map([[jobs[0].requestKey, result.id as string]])
+      : new Map<string | undefined, string>(
+          result.jobs.map((job: { request_key: string; id: string }) => [job.request_key, job.id]),
+        );
+  return new Map(
+    rows.map((row) => {
+      const id = ids.get(row.searchRequestKey);
+      if (!id)
+        throw new Error('Сервер не вернул идентификатор задания. Очередь запросит его повторно.');
+      return [row.id, { id, workerAwake: result.workerAwake as boolean | undefined }];
+    }),
+  );
+}
 
 export default function Workspace() {
   const [tab, setTab] = useState<Tab>('workspace');
@@ -92,6 +148,7 @@ export default function Workspace() {
   const [searchOptions, setSearchOptions] = useState<SearchOptions>(DEFAULT_SEARCH_OPTIONS);
   const [password, setPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [accessVerified, setAccessVerified] = useState(false);
   const [saved, setSaved] = useState(true);
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
   const [operation, setOperation] = useState<{
@@ -103,26 +160,60 @@ export default function Workspace() {
   const [exporting, setExporting] = useState(false);
   const [panelBusy, setPanelBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [checkingSources, setCheckingSources] = useState(false);
+  const [sourceStatus, setSourceStatus] = useState<SearchServiceStatus | null>(null);
+  const [sourceStatusError, setSourceStatusError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const supplierFolderRef = useRef<HTMLInputElement>(null);
   const batchRef = useRef<Batch | null>(null);
   const stopRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
+  const queuePollingRef = useRef(false);
+  const queueSubmittingRef = useRef(false);
+  const configRef = useRef<AppConfig | null>(null);
+  const configPromiseRef = useRef<Promise<AppConfig | null> | null>(null);
   const busy = !!operation || panelBusy || switching;
 
   function notify(message: string, error = false) {
     setToast({ message, error });
+  }
+  function requireAccess() {
+    setAccessVerified(false);
+    setSettingsOpen(true);
+  }
+  async function checkAccess() {
+    setAuthBusy(true);
+    try {
+      if (password) setAccessPassword(password);
+      await apiFetch('/api/session');
+      setAccessVerified(true);
+      setPassword('');
+      notify('Доступ к серверу подтверждён.');
+    } catch (error) {
+      setAccessPassword('');
+      setAccessVerified(false);
+      notify(errorText(error), true);
+    } finally {
+      setAuthBusy(false);
+    }
   }
   function changeBatch(value: Batch | null) {
     batchRef.current = value;
     setBatch(value);
   }
   function patchRow(id: string, patch: Partial<ProductRow>) {
+    patchRows(new Map([[id, patch]]));
+  }
+  function patchRows(changes: Map<string, Partial<ProductRow>>) {
     const current = batchRef.current;
-    if (!current) return;
+    if (!current || !changes.size) return;
     changeBatch({
       ...current,
-      rows: current.rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+      rows: current.rows.map((row) => {
+        const patch = changes.get(row.id);
+        return patch ? { ...row, ...patch } : row;
+      }),
     });
   }
   async function persistCurrent() {
@@ -152,7 +243,7 @@ export default function Workspace() {
           batchRef.current = items[0];
           setBatch(items[0]);
           setProfile(items[0].profile);
-          setSearchOptions(items[0].searchOptions ?? DEFAULT_SEARCH_OPTIONS);
+          setSearchOptions(restoreSearchOptions(items[0].searchOptions));
         }
       })
       .catch((error) => {
@@ -161,10 +252,14 @@ export default function Workspace() {
       .finally(() => {
         if (alive) setLoaded(true);
       });
-    fetch('/api/config')
+    configPromiseRef.current = fetch('/api/config')
       .then((response) => response.json())
       .then((value) => {
-        if (alive) setConfig(value);
+        if (alive) {
+          setConfig(value);
+          configRef.current = value;
+        }
+        return value as AppConfig;
       })
       .catch(() => {
         if (alive)
@@ -172,6 +267,7 @@ export default function Workspace() {
             message: 'Не удалось проверить источники. Загрузка своих фото доступна.',
             error: true,
           });
+        return null;
       });
     return () => {
       alive = false;
@@ -204,6 +300,173 @@ export default function Workspace() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (
+      !config.databaseConfigured ||
+      (config.accessProtected && !accessVerified) ||
+      !batch?.rows.some(
+        (row) => row.status === 'searching' && (row.searchJobId || row.searchRequestKey),
+      )
+    )
+      return;
+    let alive = true;
+    let retryAfter = 0;
+    const timer = window.setInterval(async () => {
+      if (queueSubmittingRef.current || queuePollingRef.current || Date.now() < retryAfter) return;
+      queuePollingRef.current = true;
+      try {
+        const pendingRows =
+          batchRef.current?.rows.filter(
+            (row) => row.status === 'searching' && (row.searchJobId || row.searchRequestKey),
+          ) ?? [];
+        const unsent = pendingRows.filter((row) => !row.searchJobId);
+        const submittedIds = new Map(pendingRows.map((row) => [row.id, row.searchJobId]));
+        if (unsent.length) {
+          const completed = await submitQueuedRows(unsent);
+          if (!alive) return;
+          const changes = new Map<string, Partial<ProductRow>>();
+          for (const [id, job] of completed) {
+            submittedIds.set(id, job.id);
+            changes.set(id, { searchJobId: job.id });
+          }
+          patchRows(changes);
+          await persistCurrent();
+        }
+        const jobs = new Map<string, JobSnapshot>();
+        for (let i = 0; i < pendingRows.length; i += 100) {
+          const response = await apiFetch('/api/jobs/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ids: pendingRows.slice(i, i + 100).map((row) => submittedIds.get(row.id)),
+            }),
+          });
+          for (const job of (await response.json()).jobs as JobSnapshot[]) jobs.set(job.id, job);
+        }
+        const currentRows = new Map(batchRef.current?.rows.map((row) => [row.id, row]));
+        const changes = new Map<string, Partial<ProductRow>>();
+        for (const row of pendingRows) {
+          if (!alive) return;
+          if (currentRows.get(row.id)?.searchRequestKey !== row.searchRequestKey) continue;
+          const job = jobs.get(submittedIds.get(row.id) ?? '');
+          if (!job) {
+            changes.set(row.id, {
+              status: 'error',
+              error: 'Задание не найдено. Запустите поиск снова.',
+              searchRequestKey: undefined,
+              searchJobId: undefined,
+            });
+            continue;
+          }
+          if (job.status === 'succeeded') {
+            const result: SearchResponse = job.result;
+            changes.set(row.id, {
+              status: result.candidates.length
+                ? 'review'
+                : result.outcome === 'deferred'
+                  ? 'deferred'
+                  : 'not_found',
+              candidates: result.candidates,
+              qualityWarnings: result.warnings,
+              searchDiagnostics: result.diagnostics,
+              searchCoverage: result.coverage,
+              searchJobId: undefined,
+              searchRequestKey: undefined,
+              searchJobMessage: undefined,
+              selectedCandidateId: undefined,
+              confirmed: false,
+            });
+          } else if (job.status === 'failed' || job.status === 'cancelled') {
+            changes.set(row.id, {
+              status: job.status === 'cancelled' ? 'pending' : 'error',
+              error: job.error,
+              searchJobId: undefined,
+              searchRequestKey: undefined,
+              searchJobMessage: undefined,
+            });
+          } else {
+            const searchJobMessage =
+              job.status === 'queued'
+                ? config.cloudWorkerConfigured
+                  ? 'В очереди · облачный поиск запускается автоматически'
+                  : 'В очереди · резервный облачный поиск'
+                : job.status === 'retry'
+                  ? `Источники временно недоступны · повтор ${job.attempts + 1}/3 после ${new Date(job.available_at).toLocaleTimeString('ru')}`
+                  : `Идёт поиск · попытка ${job.attempts}/3`;
+            if (currentRows.get(row.id)?.searchJobMessage !== searchJobMessage)
+              changes.set(row.id, { searchJobMessage });
+          }
+        }
+        patchRows(changes);
+      } catch (error) {
+        retryAfter = Date.now() + 60_000;
+        if (alive) {
+          if (error instanceof ApiRequestError && error.status === 401) requireAccess();
+          notify('Очередь: ' + errorText(error), true);
+        }
+      } finally {
+        queuePollingRef.current = false;
+      }
+    }, 4000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    config.databaseConfigured,
+    config.cloudWorkerConfigured,
+    batch?.id,
+    batch?.rows.some((row) => row.status === 'searching'),
+    config.accessProtected,
+    accessVerified,
+  ]);
+
+  async function cancelQueuedSearches() {
+    const pending =
+      batchRef.current?.rows.filter(
+        (row) => row.status === 'searching' && (row.searchJobId || row.searchRequestKey),
+      ) ?? [];
+    if (!pending.length) return;
+    setPanelBusy(true);
+    queueSubmittingRef.current = true;
+    try {
+      const unsent = pending.filter((row) => !row.searchJobId);
+      const recovered = unsent.length ? await submitQueuedRows(unsent) : undefined;
+      const ids = pending.map((row) => row.searchJobId ?? recovered?.get(row.id)?.id ?? '');
+      let cancelled: string[];
+      if (ids.length === 1) {
+        const reply = await apiFetch('/api/jobs/' + ids[0], { method: 'POST' });
+        cancelled = (await reply.json()).status === 'cancelled' ? ids : [];
+      } else {
+        const reply = await apiFetch('/api/jobs/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+        cancelled = (await reply.json()).ids;
+      }
+      const cancelledSet = new Set(cancelled);
+      const changes = new Map<string, Partial<ProductRow>>();
+      pending.forEach((row, index) => {
+        if (!cancelledSet.has(ids[index])) return;
+        changes.set(row.id, {
+          status: 'pending',
+          searchJobId: undefined,
+          searchRequestKey: undefined,
+          searchJobMessage: undefined,
+        });
+      });
+      patchRows(changes);
+      await persistCurrent();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 401) requireAccess();
+      notify(errorText(error), true);
+    } finally {
+      queueSubmittingRef.current = false;
+      setPanelBusy(false);
+    }
+  }
+
   const rows = batch?.rows ?? [];
   const ready = rows.filter(
     (row) =>
@@ -214,12 +477,15 @@ export default function Workspace() {
       row.vision?.verdict !== 'conflict',
   ).length;
   const review = rows.filter((row) => row.status === 'review').length;
-  const unresolved = rows.filter((row) => ['not_found', 'error'].includes(row.status)).length;
+  const unresolved = rows.filter((row) =>
+    ['not_found', 'deferred', 'error'].includes(row.status),
+  ).length;
   const activeRow = rows.find((row) => row.id === activeId);
   const filtered = rows.filter((row) => {
     if (filter === 'ready' && row.status !== 'ready') return false;
     if (filter === 'review' && row.status !== 'review') return false;
-    if (filter === 'unresolved' && !['not_found', 'error'].includes(row.status)) return false;
+    if (filter === 'unresolved' && !['not_found', 'deferred', 'error'].includes(row.status))
+      return false;
     return `${row.sku} ${row.internalCode} ${row.ean} ${row.nameRu} ${row.nameRo}`
       .toLowerCase()
       .includes(query.toLowerCase());
@@ -281,9 +547,16 @@ export default function Workspace() {
   async function searchRows() {
     if (!batch || busy) return;
     const targets = selected.size
-      ? rows.filter((row) => selected.has(row.id) && row.status !== 'ready' && !row.originalBlob)
+      ? rows.filter(
+          (row) =>
+            selected.has(row.id) &&
+            row.status !== 'ready' &&
+            row.status !== 'searching' &&
+            !row.originalBlob,
+        )
       : rows.filter(
-          (row) => ['pending', 'not_found', 'error'].includes(row.status) && !row.originalBlob,
+          (row) =>
+            ['pending', 'not_found', 'deferred', 'error'].includes(row.status) && !row.originalBlob,
         );
     if (!targets.length) {
       notify(
@@ -294,10 +567,152 @@ export default function Workspace() {
     await runSearch(targets);
   }
 
+  async function importSupplierFolder(files: File[]) {
+    const current = batchRef.current;
+    if (!current || busy || !files.length) return;
+    setPanelBusy(true);
+    try {
+      const { matched, unmatched, ambiguous, occupied } = matchSupplierPhotos(current.rows, files);
+      const changes = new Map<string, Partial<ProductRow>>();
+      let invalid = 0;
+      for (const { row, file } of matched) {
+        try {
+          changes.set(row.id, await supplierPhotoPatch(row, file));
+        } catch {
+          invalid++;
+        }
+      }
+      if (changes.size) {
+        patchRows(changes);
+        await persistCurrent();
+      }
+      notify(
+        `Фото поставщика добавлено на проверку: ${changes.size}. Без совпадения: ${unmatched}, неоднозначных: ${ambiguous}, с фото или активным поиском: ${occupied}, неподдерживаемых или повреждённых: ${invalid}.`,
+        !changes.size,
+      );
+    } catch (error) {
+      notify(errorText(error), true);
+    } finally {
+      setPanelBusy(false);
+    }
+  }
+
   async function runSearch(
-    targets: ProductRow[],
-    options = batchRef.current?.searchOptions ?? DEFAULT_SEARCH_OPTIONS,
+    requested: ProductRow[],
+    options = restoreSearchOptions(batchRef.current?.searchOptions),
+    refresh = false,
+    byName = false,
   ) {
+    const targets = requested.filter((row) => {
+      const error = rowSearchError(row, byName);
+      if (error) patchRow(row.id, { status: 'error', error });
+      return !error;
+    });
+    if (!targets.length) {
+      notify('Проверьте GTIN, SKU и название в карточках выбранных товаров.', true);
+      return;
+    }
+    setOperation({
+      kind: 'search',
+      total: targets.length,
+      done: 0,
+      message: 'Проверяем подключение поиска…',
+    });
+    let runtimeConfig = configRef.current;
+    if (!runtimeConfig) {
+      runtimeConfig = await configPromiseRef.current;
+      if (!runtimeConfig) {
+        try {
+          runtimeConfig = await (await fetch('/api/config')).json();
+          configRef.current = runtimeConfig;
+          if (runtimeConfig) setConfig(runtimeConfig);
+        } catch {
+          /* The error below leaves manual image preparation available. */
+        }
+      }
+    }
+    if (!runtimeConfig) {
+      notify(
+        'Не удалось проверить подключение поиска. Повторите запрос; загрузка своих фото доступна.',
+        true,
+      );
+      setOperation(null);
+      return;
+    }
+    if (runtimeConfig.accessProtected && !accessVerified) {
+      requireAccess();
+      notify('Подтвердите доступ к серверу перед поиском.', true);
+      setOperation(null);
+      return;
+    }
+    if (runtimeConfig.databaseConfigured) {
+      setOperation({
+        kind: 'search',
+        total: targets.length,
+        done: 0,
+        message: 'Добавляем товары в общую очередь…',
+      });
+      stopRef.current = false;
+      queueSubmittingRef.current = true;
+      try {
+        const prepared = targets.map((row): ProductRow => ({
+          ...row,
+          status: 'searching',
+          error: undefined,
+          searchJobId: undefined,
+          searchRequestKey: crypto.randomUUID(),
+          lastSearchOptions: options,
+          searchRefresh: refresh,
+          searchByName: byName,
+          searchJobMessage: runtimeConfig.cloudWorkerConfigured
+            ? 'В очереди · облачный поиск запускается автоматически'
+            : 'В очереди · резервный облачный поиск',
+        }));
+        patchRows(new Map(prepared.map((row) => [row.id, row])));
+        await persistCurrent();
+        if (stopRef.current) {
+          const current = batchRef.current;
+          const previous = new Map(targets.map((row) => [row.id, row]));
+          if (current)
+            changeBatch({
+              ...current,
+              rows: current.rows.map((row) => previous.get(row.id) ?? row),
+            });
+          await persistCurrent();
+          return;
+        }
+        const jobs = await submitQueuedRows(prepared);
+        const changes = new Map<string, Partial<ProductRow>>();
+        for (const [rowId, job] of jobs) {
+          changes.set(rowId, {
+            searchJobId: job.id,
+            ...(job.workerAwake === false
+              ? {
+                  searchJobMessage: 'Задание сохранено · резервный поиск на Vercel',
+                }
+              : {}),
+          });
+        }
+        patchRows(changes);
+        await persistCurrent();
+        if (stopRef.current) {
+          await cancelQueuedSearches();
+          return;
+        }
+        notify(
+          runtimeConfig.cloudWorkerConfigured
+            ? 'Облачный поиск запущен. Можно закрыть вкладку — поиск продолжится, результаты сохранятся.'
+            : 'Товары добавлены в очередь. Поиск выполняется на Vercel; задания сохранятся.',
+        );
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 401) requireAccess();
+        notify(errorText(error), true);
+      } finally {
+        queueSubmittingRef.current = false;
+        setOperation(null);
+      }
+      return;
+    }
     stopRef.current = false;
     setOperation({ kind: 'search', total: targets.length, done: 0, message: 'Запускаем поиск…' });
     let completed = 0;
@@ -306,12 +721,12 @@ export default function Workspace() {
         if (stopRef.current) break;
         const controller = new AbortController();
         controllerRef.current = controller;
-        patchRow(row.id, { status: 'searching', error: undefined });
+        patchRow(row.id, { status: 'searching', error: undefined, searchByName: byName });
         setOperation({
           kind: 'search',
           total: targets.length,
           done: completed,
-          message: `Ищем ${row.sku} · ${row.nameRu || row.nameRo}`,
+          message: `Ищем ${row.sku} · ${rowTitle(row)}`,
         });
         try {
           const response = await apiFetch('/api/search', {
@@ -320,26 +735,29 @@ export default function Workspace() {
             body: JSON.stringify({
               sku: row.sku,
               internalCode: row.internalCode,
-              ean: row.ean,
-              nameRu: row.nameRu,
-              nameRo: row.nameRo,
-              brand: row.brand,
-              quantity: row.quantity,
+              ...rowSearchProduct(row, byName),
               searchOptions: options,
+              refresh,
             }),
             signal: controller.signal,
           });
           const result: SearchResponse = await response.json();
           patchRow(row.id, {
             candidates: result.candidates,
-            status: result.candidates.length ? 'review' : 'not_found',
+            status: result.candidates.length
+              ? 'review'
+              : result.outcome === 'deferred'
+                ? 'deferred'
+                : 'not_found',
             qualityWarnings: result.warnings,
             searchDiagnostics: result.diagnostics,
+            searchCoverage: result.coverage,
             lastSearchOptions: { ...options },
             selectedCandidateId: undefined,
             confirmed: false,
           });
         } catch (error) {
+          if (error instanceof ApiRequestError && error.status === 401) requireAccess();
           patchRow(row.id, {
             status: controller.signal.aborted ? row.status : 'error',
             error: controller.signal.aborted ? undefined : errorText(error),
@@ -461,7 +879,7 @@ export default function Workspace() {
       const latest = (await listBatches()).find((value) => value.id === item.id) || item;
       changeBatch(latest);
       setProfile(latest.profile);
-      setSearchOptions(latest.searchOptions ?? DEFAULT_SEARCH_OPTIONS);
+      setSearchOptions(restoreSearchOptions(latest.searchOptions));
       setActiveId(null);
       setSelected(new Set());
       setQuery('');
@@ -524,6 +942,33 @@ export default function Workspace() {
     setSearchOptions(next);
     rememberPreferences({ ...preferences, search: next });
     if (batchRef.current) changeBatch({ ...batchRef.current, searchOptions: next });
+  }
+  async function checkSources() {
+    if (checkingSources) return;
+    setCheckingSources(true);
+    setSourceStatus(null);
+    setSourceStatusError(null);
+    try {
+      const response = await apiFetch('/api/search-status', { method: 'POST' });
+      setSourceStatus(await response.json());
+    } catch (error) {
+      setSourceStatusError(errorText(error));
+    } finally {
+      setCheckingSources(false);
+    }
+  }
+  function serviceState(id: string, configured: boolean) {
+    const checked = sourceStatus?.services.find((service) => service.id === id);
+    if (checked?.status === 'ok')
+      return { status: 'Соединение подтверждено', enabled: true, message: checked.message };
+    if (checked?.status === 'unavailable')
+      return { status: 'Недоступен', enabled: false, message: checked.message };
+    if (checked?.status === 'not_configured')
+      return { status: 'Не подключён', enabled: false, message: checked.message };
+    return {
+      status: configured ? 'Настроен · не проверен' : 'Не подключён',
+      enabled: false,
+    };
   }
   function nextReview() {
     const current = batchRef.current;
@@ -736,7 +1181,9 @@ export default function Workspace() {
                       )}
                       {loadingFile ? 'Читаем таблицу…' : 'Загрузить Excel'}
                     </button>
-                    <span className="file-hint">XLSX или CSV · до 10 МБ · до 500 позиций</span>
+                    <span className="file-hint">
+                      XLSX или CSV · до 10 МБ · до {MAX_IMPORT_ROWS} позиций
+                    </span>
                     <button
                       className="text-button single-product-shortcut"
                       disabled={loadingFile || !loaded}
@@ -770,7 +1217,7 @@ export default function Workspace() {
                     </span>
                     <span>
                       <Check size={15} />
-                      Локальная обработка без AI-токенов
+                      Обработка в браузере без AI-токенов
                     </span>
                   </div>
                 </div>
@@ -810,19 +1257,19 @@ export default function Workspace() {
                       <ShieldCheck size={17} />
                       <span>
                         Для поиска на опубликованном сайте задайте MVP_ACCESS_PASSWORD в окружении
-                        сервера. Загрузка своих фото и локальная обработка доступны.
+                        сервера. Загрузка своих фото и обработка в браузере доступны.
                       </span>
                     </div>
                   )}
-                  {!config.searxngConfigured &&
+                  {!config.braveConfigured &&
                     !config.tavilyConfigured &&
                     config.serverReady !== false && (
                       <div className="source-notice">
                         <Globe size={17} />
                         <p>
                           {searchOptions.mode === 'moldova'
-                            ? 'Режим «Молдова»: местные каталоги и Open Food Facts по EAN. Для большего охвата расширьте поиск в настройках или карточке SKU.'
-                            : 'Рынок: Молдова. Работают прямые каталоги магазинов и производителей, региональные источники и базы EAN. Для общего веб-поиска подключите SearXNG или Tavily Free.'}
+                            ? 'Режим «Молдова»: местные каталоги и Open Food Facts по EAN. При отказе магазина разрешённый веб-поиск проверяет только молдавские источники.'
+                            : 'Рынок: Молдова. Работают прямые каталоги магазинов и производителей, региональные источники и базы EAN. Для общего веб-поиска подключите Brave Search или Tavily Free.'}
                         </p>
                         <button className="text-button" onClick={() => setTab('sources')}>
                           Источники
@@ -862,6 +1309,30 @@ export default function Workspace() {
                     </button>
                   </div>
                   <div className="batch-search-controls">
+                    <input
+                      ref={(input) => {
+                        supplierFolderRef.current = input;
+                        input?.setAttribute('webkitdirectory', '');
+                      }}
+                      type="file"
+                      multiple
+                      hidden
+                      aria-label="Папка с фото поставщика"
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        event.target.value = '';
+                        void importSupplierFolder(files);
+                      }}
+                    />
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      title="Названия файлов должны совпадать с SKU, внутренним кодом или GTIN"
+                      onClick={() => supplierFolderRef.current?.click()}
+                    >
+                      Фото поставщика из папки
+                    </button>
+                    {config.databaseConfigured && <span>Общий каталог и очередь · Neon Free</span>}
                     <span>
                       Поиск:{' '}
                       <strong>
@@ -911,6 +1382,25 @@ export default function Workspace() {
                         </button>
                       </div>
                       <progress max={operation.total} value={operation.done} />
+                    </div>
+                  )}
+                  {config.databaseConfigured && rows.some((row) => row.status === 'searching') && (
+                    <div className="notice-inline" role="status">
+                      <Loader2 size={16} className="spin" />
+                      <span>
+                        В очереди или поиске:{' '}
+                        {rows.filter((row) => row.status === 'searching').length}.{' '}
+                        {config.cloudWorkerConfigured
+                          ? 'Поиск работает в облаке. Можно закрыть вкладку и вернуться к результатам позже.'
+                          : 'Резервный поиск выполняется на Vercel. Задания сохраняются в общей базе.'}
+                      </span>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => void cancelQueuedSearches()}
+                      >
+                        Отменить поиск
+                      </button>
                     </div>
                   )}
                   <div className={`workspace-grid ${activeRow ? 'has-review' : ''}`}>
@@ -1006,7 +1496,7 @@ export default function Workspace() {
                                       )}
                                     </div>
                                     <div>
-                                      <strong>{row.nameRu || row.nameRo}</strong>
+                                      <strong>{rowTitle(row)}</strong>
                                       <span>
                                         SKU {row.sku}
                                         {row.internalCode ? ` · Код ${row.internalCode}` : ''}
@@ -1069,7 +1559,8 @@ export default function Workspace() {
                         row={activeRow}
                         profile={batch.profile}
                         geminiConfigured={config.geminiConfigured}
-                        disabled={!!operation}
+                        databaseConfigured={config.databaseConfigured}
+                        disabled={!!operation || activeRow.status === 'searching'}
                         onBusy={setPanelBusy}
                         onPatch={patchRow}
                         onClose={() => setActiveId(null)}
@@ -1079,10 +1570,12 @@ export default function Workspace() {
                             ? nextReview
                             : undefined
                         }
-                        onSearch={(expanded) =>
+                        onSearch={(expanded, byName) =>
                           void runSearch(
                             [activeRow],
                             expanded ? { ...searchOptions, mode: 'expanded' } : searchOptions,
+                            true,
+                            byName,
                           )
                         }
                         searchMode={searchOptions.mode}
@@ -1159,7 +1652,46 @@ export default function Workspace() {
 
           {tab === 'sources' && (
             <>
+              <section className="regional-source-panel" aria-label="Проверка соединения">
+                <div className="section-label">
+                  <h2>Состояние поиска без LLM</h2>
+                  <button
+                    className="button secondary"
+                    disabled={checkingSources || config.serverReady === false}
+                    onClick={() => void checkSources()}
+                  >
+                    {checkingSources ? <Loader2 size={16} className="spin" /> : <Check size={16} />}
+                    {checkingSources ? 'Проверяем соединение…' : 'Проверить соединение'}
+                  </button>
+                </div>
+                <p className="muted small">
+                  Настроенный адрес ещё не означает, что сервис отвечает. Проверка доступности не
+                  запускает поиск товаров и не обращается к Gemini.
+                </p>
+                {sourceStatusError && <p role="alert">{sourceStatusError}</p>}
+                {sourceStatus && (
+                  <p role="status" className="muted small">
+                    Проверка завершена.{' '}
+                    {sourceStatus.catalogSize !== undefined &&
+                      `Товаров в каталоге: ${sourceStatus.catalogSize}. `}
+                    {sourceStatus.cacheEntries !== undefined &&
+                      `Записей в кэше: ${sourceStatus.cacheEntries}.`}
+                  </p>
+                )}
+              </section>
               <div className="sources-grid">
+                <SourceCard
+                  name="Общий каталог · Neon Free"
+                  type="ПОДТВЕРЖДЁННЫЕ ФОТО И ОЧЕРЕДЬ"
+                  status={config.databaseConfigured ? 'Настроено' : 'Не подключён'}
+                  enabled={!!config.databaseConfigured}
+                  description="Подтверждённые фотографии используются до интернет-поиска. Задания сохраняются при закрытии вкладки."
+                  detail={
+                    config.cloudWorkerConfigured
+                      ? 'Поиск запускается автоматически в Neon Functions Free. Ваш компьютер не нужен. После поиска исполнитель останавливается; сбои восстанавливаются по сохранённой очереди. Для подготовки JPEG и ZIP откройте сайт.'
+                      : 'При недоступности Neon задания выполняет Vercel. Откройте сайт для восстановления отложенных заданий.'
+                  }
+                />
                 <SourceCard
                   name="Open Food Facts"
                   type="БЕСПЛАТНЫЙ КАТАЛОГ"
@@ -1179,28 +1711,25 @@ export default function Workspace() {
                   detail="Бесплатный тариф: до 100 запросов в день, ограничение частоты. Платный переход отсутствует."
                 />
                 <SourceCard
-                  name="SearXNG"
-                  type="БЕСПЛАТНЫЙ ВЕБ-ПОИСК"
-                  status={config.searxngConfigured ? 'Адрес настроен' : 'Нужен собственный сервер'}
-                  enabled={!!config.searxngConfigured}
-                  description="Поиск страниц и изображений по EAN и названиям RU / RO. Без LLM и оплаты поискового API; работает на вашем оборудовании."
-                  detail="Доступность движков проверяется при поиске. В расширенном режиме используется первым."
+                  name="Brave Search"
+                  type="ОСНОВНОЙ ВЕБ-ПОИСК"
+                  status={
+                    !config.braveConfigured
+                      ? 'Нужен API-ключ'
+                      : config.braveFreeOnlyConfirmed
+                        ? 'Ключ настроен · не проверен'
+                        : 'Расход не подтверждён'
+                  }
+                  enabled={!!config.braveConfigured && !!config.braveFreeOnlyConfirmed}
+                  description="Поиск по EAN и названиям RU / RO. Запускается, если прямые каталоги не дали точного совпадения."
+                  detail="До двух запросов на SKU. Выключен до подтверждения запрета платного расхода в аккаунте ключа; служебная проверка не расходует Brave-кредиты."
                 />
                 <SourceCard
                   name="Tavily Free"
                   type="РЕЗЕРВНЫЙ ВЕБ-ПОИСК"
-                  status={config.tavilyConfigured ? 'Ключ настроен' : 'Нужен бесплатный API-ключ'}
-                  enabled={!!config.tavilyConfigured}
+                  {...serviceState('tavily', !!config.tavilyConfigured)}
                   description="1 000 кредитов в месяц без карты. Один basic-запрос на SKU по умолчанию. Тариф и остаток проверяются до поиска."
-                  detail="Нужен Researcher с выключенным pay-as-you-go. Платный тариф или исчерпанная квота блокируют поиск; настройка аккаунта подтверждается при подключении."
-                />
-                <SourceCard
-                  name="Crawl4AI"
-                  type="ЧТЕНИЕ КАРТОЧЕК ТОВАРОВ"
-                  status={config.crawl4aiConfigured ? 'Сервис настроен' : 'Не подключён'}
-                  enabled={!!config.crawl4aiConfigured}
-                  description="Загружает динамические карточки через Chromium без LLM. Извлекает данные Product и фотографии; сам не ищет товары."
-                  detail="До одной страницы на SKU, только разрешённые домены. EAN и фасовка проверяются обычными правилами."
+                  detail="Резерв после Brave или при отсутствии его ключа. Нужен Researcher с выключенным pay-as-you-go; платный тариф или исчерпанная квота блокируют поиск."
                 />
                 <SourceCard
                   name="Gemini"
@@ -1315,25 +1844,60 @@ export default function Workspace() {
                 </label>
                 <p className="muted small">
                   {searchOptions.mode === 'moldova'
-                    ? 'METRO Moldova, Bonus, Linella, Bucuria и Open Food Facts по EAN. Для сложных SKU можно отдельно расширить поиск в карточке.'
+                    ? 'METRO Moldova, Bonus, Linella, Bucuria и Open Food Facts по EAN. При отказе магазина включённый веб-поиск восстановит доступ к местным карточкам.'
                     : 'Молдова, региональные магазины, дополнительные базы EAN и веб-поиск, если он подключён.'}
+                </p>
+                {searchOptions.mode === 'expanded' && (
+                  <label>
+                    Рынок поставщика
+                    <select
+                      value={searchOptions.market ?? ''}
+                      onChange={(event) => {
+                        const market = event.target.value;
+                        updateSearchOptions({
+                          ...searchOptions,
+                          market: isSupplierMarket(market) ? market : undefined,
+                        });
+                      }}
+                    >
+                      <option value="">Все подключённые источники</option>
+                      {Object.entries(SUPPLIER_MARKETS).map(([code, { label }]) => (
+                        <option key={code} value={code}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={searchOptions.useCache ?? true}
+                    onChange={(event) =>
+                      updateSearchOptions({ ...searchOptions, useCache: event.target.checked })
+                    }
+                  />
+                  <span>Использовать сохранённые результаты поиска</span>
+                </label>
+                <p className="muted small">
+                  Кэш сокращает время повторного поиска. Кнопки «Повторить поиск» и «Расширить поиск
+                  для SKU» в карточке всегда запрашивают свежие результаты.
                 </p>
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
                     checked={searchOptions.useWeb}
-                    disabled={searchOptions.mode === 'moldova'}
                     onChange={(event) =>
                       updateSearchOptions({ ...searchOptions, useWeb: event.target.checked })
                     }
                   />
-                  <span>Использовать бесплатный веб-поиск в расширенном режиме</span>
+                  <span>Использовать бесплатный веб-поиск и резерв для недоступных магазинов</span>
                 </label>
                 <label>
                   Лимит веб-запросов на SKU
                   <select
                     value={searchOptions.webQueryLimit}
-                    disabled={searchOptions.mode === 'moldova' || !searchOptions.useWeb}
+                    disabled={!searchOptions.useWeb}
                     onChange={(event) =>
                       updateSearchOptions({
                         ...searchOptions,
@@ -1348,13 +1912,13 @@ export default function Workspace() {
                   </select>
                 </label>
                 <p className="muted small">
-                  SearXNG использует указанный лимит; Tavily — один запрос на SKU по умолчанию, с
-                  отдельным серверным пределом. Не более трёх карточек и одной страницы Crawl4AI на
-                  SKU.{' '}
-                  {config.searxngConfigured || config.tavilyConfigured
+                  Brave — до двух запросов на SKU по умолчанию; Tavily — один запрос на SKU по
+                  умолчанию с отдельным серверным пределом. Не более трёх карточек на SKU.{' '}
+                  {config.braveConfigured || config.tavilyConfigured
                     ? 'Бесплатный веб-поиск настроен; состояние источников появится в диагностике.'
                     : 'Веб-поиск ещё не подключён: используются прямые каталоги и базы EAN.'}{' '}
-                  Gemini запускается только кнопкой в карточке.
+                  Gemini запускается только кнопкой в карточке. Локальная модель удаления фона
+                  относится к обработке фотографии и не участвует в поиске.
                 </p>
               </div>
             </section>
@@ -1413,7 +1977,7 @@ export default function Workspace() {
                       })
                     }
                   >
-                    <option value="ai">Локальная нейросеть U²-Net — без токенов</option>
+                    <option value="ai">Нейросеть в браузере U²-Net — без токенов</option>
                     <option value="white">Обрезка светлого фона — без модели</option>
                   </select>
                 </label>
@@ -1430,6 +1994,15 @@ export default function Workspace() {
           </div>
           <div className="settings-access">
             <h3>Доступ к серверу</h3>
+            <p role="status">
+              {config.serverReady === false
+                ? 'Сервер не настроен'
+                : !config.accessProtected
+                  ? 'Локальный доступ'
+                  : accessVerified
+                    ? 'Доступ подтверждён'
+                    : 'Требуется пароль'}
+            </p>
             <p className="muted small">
               {config.accessProtected
                 ? 'Сервер защищён паролем. Пароль хранится только в памяти этой вкладки.'
@@ -1449,21 +2022,9 @@ export default function Workspace() {
               <button
                 className="button secondary"
                 disabled={authBusy}
-                onClick={async () => {
-                  setAuthBusy(true);
-                  try {
-                    setAccessPassword(password);
-                    await apiFetch('/api/session');
-                    notify('Доступ к серверу подтверждён.');
-                    setPassword('');
-                  } catch (error) {
-                    notify(errorText(error), true);
-                  } finally {
-                    setAuthBusy(false);
-                  }
-                }}
+                onClick={() => void checkAccess()}
               >
-                Подключиться
+                {authBusy ? 'Проверяем…' : 'Проверить доступ'}
               </button>
             </div>
           </div>
@@ -1489,8 +2050,9 @@ export default function Workspace() {
               <strong>Запустите поиск.</strong>
               <p>
                 Режим «Молдова» сокращает число источников; расширенный охватывает всю подключённую
-                базу. Для выбранного SKU поиск можно расширить отдельно. Откройте карточку и
-                выберите фото; можно загрузить собственное или добавить HTTPS-ссылку.
+                базу. По умолчанию поиск выполняется без LLM и использует кэш. Для выбранного SKU
+                кнопки повторного и расширенного поиска обходят кэш. Откройте карточку и выберите
+                фото; можно загрузить собственное или добавить HTTPS-ссылку.
               </p>
             </li>
             <li>
@@ -1592,6 +2154,7 @@ function SourceCard({
   enabled,
   description,
   detail,
+  message,
 }: {
   name: string;
   type: string;
@@ -1599,6 +2162,7 @@ function SourceCard({
   enabled: boolean;
   description: string;
   detail: string;
+  message?: string;
 }) {
   return (
     <article className="source-card">
@@ -1610,6 +2174,7 @@ function SourceCard({
       </span>
       <p>{description}</p>
       <div className="source-card-detail">{detail}</div>
+      {message && <p className="muted small">{message}</p>}
     </article>
   );
 }

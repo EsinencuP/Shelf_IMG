@@ -1,25 +1,52 @@
 import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
 import { createHash } from 'node:crypto';
-export const WEB_PROVIDER_IDS = ['searxng', 'tavily'] as const;
-export const WEB_PROVIDER_NAMES = { searxng: 'SearXNG', tavily: 'Tavily Free' };
 import type { Candidate, SearchDiagnostic } from '../types';
 import { ApiError } from './http';
-import { candidateId, obj, safeUrl, str } from './catalog-utils';
+import { candidateId, obj, safeUrl, str, zakazProductGtin } from './catalog-utils';
 import { discoverPage } from './page-discovery';
-import { serviceEndpoint, serviceJson } from './discovery-services';
+import { serviceJson } from './discovery-services';
+import { reserveSource } from './database';
 import { matchCandidate } from './matching';
-import { titleRelevance, webQueries } from './search-queries';
-import type { SearchProduct } from './validation';
-
-export type WebProvider = 'searxng' | 'tavily';
+import { canonicalText, titleRelevance, webQueries } from './search-queries';
+import { extractedPageEvidence } from './extracted-page';
+import { normalizeGtin, type SearchProduct } from './validation';
+import { SUPPLIER_MARKETS, type SupplierMarket } from '../search-sources';
+export const WEB_PROVIDER_IDS = ['brave', 'tavily'] as const;
+export type WebProvider = (typeof WEB_PROVIDER_IDS)[number];
+export const WEB_PROVIDER_NAMES = { brave: 'Brave Search', tavily: 'Tavily Free' };
+export const MOLDOVA_WEB_DOMAINS = [
+  'metro.zakaz.md',
+  'bonus.zakaz.md',
+  'linella.md',
+  'bucuria.md',
+  'www.bucuria.md',
+] as const;
 export function configuredWebProviders(): WebProvider[] {
   return [
-    ...(process.env.SEARXNG_URL ? ['searxng' as const] : []),
-    ...(process.env.TAVILY_API_KEY ? ['tavily' as const] : []),
+    ...(process.env.BRAVE_SEARCH_API_KEY?.trim() ? ['brave' as const] : []),
+    ...(process.env.TAVILY_API_KEY?.trim() ? ['tavily' as const] : []),
   ];
 }
-const names = { searxng: 'SearXNG', tavily: 'Tavily Free' };
-
+// Attestation must refer to this key's account with paid balance/top-ups/overage disabled.
+// No process-local counter can enforce a global zero-spend limit on Vercel.
+export function braveFreeOnlyConfirmed(): boolean {
+  const key = process.env.BRAVE_SEARCH_API_KEY?.trim();
+  return (
+    !!key &&
+    process.env.BRAVE_FREE_ONLY_CONFIRMED === 'true' &&
+    createHash('sha256').update(key).digest('hex') === process.env.BRAVE_FREE_ONLY_KEY_SHA256
+  );
+}
+function limit(value: string | undefined, fallback: number, maximum: number) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 1 ? Math.min(maximum, Math.floor(number)) : fallback;
+}
+function exact(product: SearchProduct, candidates: Candidate[]) {
+  return candidates.some((c) => {
+    const m = matchCandidate(product, c);
+    return !m.rejected && m.candidate.matchStatus === 'exact';
+  });
+}
 /** Fail closed if the provider cannot prove a free account with paid overage disabled. */
 export function tavilyFreeRemaining(data: Record<string, unknown>): number {
   const account = obj(data.account),
@@ -71,7 +98,12 @@ function imageCandidate(
   if (
     !title ||
     titleRelevance(product, title) < 0.35 ||
-    /(?:logo|favicon|icon)(?:[._/-]|$)/i.test(new URL(imageUrl).pathname)
+    /(?:\.svg(?:\?|$)|rubricator|promotion|s150x150)/i.test(imageUrl) ||
+    /(?:logo|favicon|icon|instagram|facebook|twitter|banner|baner|barcodeimage)(?:[._/?-]|$)/i.test(
+      new URL(imageUrl).pathname,
+    ) ||
+    /\/(?:categories|category|tags|search|reviews)\//i.test(new URL(pageUrl).pathname) ||
+    new URL(pageUrl).hostname === 'barcode-list.ru'
   )
     return [];
   return [
@@ -80,7 +112,7 @@ function imageCandidate(
       title,
       imageUrl,
       pageUrl,
-      source: `${names[provider]} · ${new URL(pageUrl).hostname}`,
+      source: `${WEB_PROVIDER_NAMES[provider]} · ${new URL(pageUrl).hostname}`,
       rights: 'unknown',
       gtinExact: false,
       warnings: [
@@ -94,105 +126,180 @@ function imageCandidate(
 export async function searchWebDiscovery(
   product: SearchProduct,
   queryLimit: number,
-): Promise<{
-  candidates: Candidate[];
-  diagnostics: SearchDiagnostic[];
-  warnings: string[];
-}> {
+  mode: 'moldova' | 'expanded' = 'expanded',
+  market?: SupplierMarket,
+  checkExactPhoto?: (candidates: Candidate[]) => Promise<boolean>,
+) {
   const candidates: Candidate[] = [],
     diagnostics: SearchDiagnostic[] = [],
     warnings: string[] = [];
   const pages = new Set<string>(),
-    budget = { rendered: 0 };
-  const conflictingPages = new Set<string>();
-  const serverLimit = Math.min(
-    6,
-    Math.max(1, Math.floor(Number(process.env.SEARCH_MAX_WEB_QUERIES) || 4)),
-  );
+    conflicts = new Set<string>();
+  const unreadPages = new Set<string>();
   let reads = 0;
-  for (const provider of configuredWebProviders()) {
-    const start = Date.now();
+  let searches = 0;
+  const selectedMarket = mode === 'expanded' ? market : undefined;
+  const usableExact = (matches: Candidate[]) =>
+    !selectedMarket && exact(product, matches) && (checkExactPhoto?.(matches) ?? true);
+  const scopeDomains =
+    mode === 'moldova'
+      ? MOLDOVA_WEB_DOMAINS
+      : selectedMarket
+        ? SUPPLIER_MARKETS[selectedMarket].domains
+        : [];
+  const inScope = (url: string) => {
+    const host = new URL(url).hostname;
+    return (
+      !scopeDomains.length ||
+      scopeDomains.some(
+        (domain) => host === domain || (!!selectedMarket && host.endsWith('.' + domain)),
+      )
+    );
+  };
+  const cap = Math.min(
+    limit(process.env.SEARCH_MAX_WEB_QUERIES, 4, 6),
+    Math.max(0, Math.floor(queryLimit)),
+  );
+  const providers = configuredWebProviders();
+  for (const provider of providers) {
+    if (await usableExact(candidates)) break;
+    if (searches >= cap) break;
+    const started = Date.now();
+    const found: Candidate[] = [];
     let requests = 0,
-      completed = 0;
-    const providerCandidates: Candidate[] = [];
+      completed = 0,
+      failure = '';
+    let failureDetails: ReturnType<typeof sourceFailureDetails> | undefined;
     try {
-      // One credit/SKU by default. Client's larger search limit cannot increase this cap.
-      const limit =
-        provider === 'tavily'
-          ? Math.min(
-              serverLimit,
-              queryLimit,
-              Math.min(2, Math.max(1, Math.floor(Number(process.env.TAVILY_MAX_QUERIES) || 1))),
-            )
-          : Math.min(serverLimit, queryLimit);
-      if (provider === 'tavily') {
-        if (!process.env.TAVILY_API_KEY?.startsWith('tvly-'))
+      const key =
+        provider === 'brave'
+          ? process.env.BRAVE_SEARCH_API_KEY?.trim()
+          : process.env.TAVILY_API_KEY?.trim();
+      const max = Math.min(
+        cap -
+          searches -
+          Number(cap - searches > 1 && provider === 'brave' && providers.includes('tavily')),
+        provider === 'brave'
+          ? limit(process.env.BRAVE_MAX_QUERIES, 2, 4)
+          : limit(process.env.TAVILY_MAX_QUERIES, 1, 2),
+      );
+      if (!max) continue;
+      if (provider === 'brave') {
+        if (key?.startsWith('tvly-'))
           throw new ApiError(
             503,
-            'TAVILY_API_KEY должен содержать ключ Tavily; ключ другого провайдера не отправлен.',
+            'BRAVE_SEARCH_API_KEY содержит ключ Tavily; проверьте настройки.',
+          );
+        if (!braveFreeOnlyConfirmed())
+          throw new ApiError(
+            503,
+            'Brave выключен: запрет платного расхода в аккаунте этого ключа не подтверждён.',
+          );
+      } else {
+        if (!key?.startsWith('tvly-'))
+          throw new ApiError(
+            503,
+            'Некорректный ключ Tavily; ключ другого провайдера не отправлен.',
           );
         requests++;
-        const usage = await serviceJson(
-          new URL('https://api.tavily.com/usage'),
-          process.env.TAVILY_API_KEY,
-        );
-        if (tavilyFreeRemaining(usage) < limit)
+        if (
+          tavilyFreeRemaining(await serviceJson(new URL('https://api.tavily.com/usage'), key)) < max
+        )
           throw new ApiError(429, 'Бесплатная квота Tavily исчерпана; платный переход запрещён.');
       }
-      for (const query of webQueries(product, limit)) {
-        requests++;
+      const queryProduct =
+        (provider === 'tavily' || max === 1 || !!selectedMarket) &&
+        webQueries({ ...product, ean: '' }, 1).length
+          ? { ...product, ean: '' }
+          : product;
+      for (const rawQuery of webQueries(queryProduct, max)) {
+        const scope = scopeDomains
+          .filter((domain) => !domain.startsWith('www.'))
+          .map((domain) => `site:${domain}`)
+          .join(' OR ');
+        const query =
+          scope && provider === 'brave'
+            ? `${rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '').slice(0, 400 - scope.length - 3)} (${scope})`
+            : mode === 'moldova'
+              ? `${rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '').slice(0, 392)} Moldova`
+              : selectedMarket
+                ? rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '')
+                : rawQuery;
         let data: Record<string, unknown>;
-        if (provider === 'searxng') {
-          const endpoint = serviceEndpoint(process.env.SEARXNG_URL!, 'search');
+        requests++;
+        if (provider === 'brave') {
+          await reserveSource('api.search.brave.com', 1100);
+          const endpoint = new URL('https://api.search.brave.com/res/v1/web/search');
           endpoint.search = new URLSearchParams({
             q: query,
-            format: 'json',
-            categories: 'general,images',
-            language: 'auto',
-            safesearch: '2',
-            pageno: '1',
+            count: '10',
+            country: selectedMarket ?? 'ALL',
+            safesearch: 'strict',
+            spellcheck: 'false',
           }).toString();
-          data = await serviceJson(endpoint, process.env.SEARXNG_API_TOKEN);
-          if (Array.isArray(data.unresponsive_engines) && data.unresponsive_engines.length)
-            warnings.push('SearXNG: часть поисковых движков недоступна.');
-          if (
-            !Array.isArray(data.results) ||
-            (!data.results.length &&
-              Array.isArray(data.unresponsive_engines) &&
-              data.unresponsive_engines.length)
-          )
-            throw new ApiError(502, 'SearXNG не получил корректную выдачу от поисковых движков.');
-        } else {
-          data = await serviceJson(
-            new URL('https://api.tavily.com/search'),
-            process.env.TAVILY_API_KEY,
-            {
-              query,
-              search_depth: 'basic',
-              topic: 'general',
-              max_results: 6,
-              auto_parameters: false,
-              include_answer: false,
-              include_raw_content: false,
-              include_images: true,
-              include_image_descriptions: false,
-              include_usage: true,
-            },
+          searches++;
+          const raw = await serviceJson(
+            endpoint,
+            key,
+            undefined,
+            10000,
+            1500000,
+            'X-Subscription-Token',
           );
-          if (!Array.isArray(data.results))
-            throw new ApiError(502, 'Tavily вернул некорректную выдачу.');
+          // Brave omits the nullable web field on a valid zero-result response.
+          data = {
+            results:
+              raw.web == null && (raw.type === 'search' || raw.query) ? [] : obj(raw.web).results,
+          };
+        } else {
+          await reserveSource('api.tavily.com', 1100);
+          searches++;
+          data = await serviceJson(new URL('https://api.tavily.com/search'), key, {
+            query,
+            search_depth: 'basic',
+            topic: 'general',
+            max_results: mode === 'moldova' ? 8 : 6,
+            auto_parameters: false,
+            include_answer: false,
+            include_raw_content: false,
+            // Tavily's image search can replace useful product-page results with
+            // broad image matches. Regional recovery needs canonical pages first;
+            // Extract obtains their actual photos below.
+            include_images: mode !== 'moldova',
+            ...(mode === 'moldova' ? {} : { include_image_descriptions: true }),
+            include_usage: true,
+            ...(scopeDomains.length
+              ? { include_domains: [...scopeDomains], include_domains_mode: 'prefer' }
+              : {}),
+          });
         }
+        if (!Array.isArray(data.results))
+          throw new ApiError(502, WEB_PROVIDER_NAMES[provider] + ' вернул некорректную выдачу.');
         completed++;
-        for (const entry of (data.results as unknown[]).slice(0, 12)) {
+        const pageResults = data.results;
+        for (const entry of data.results.slice(0, 12)) {
           const item = obj(entry),
             pageUrl = safeUrl(item.url),
             title = str(item.title);
           if (!pageUrl) continue;
-          if (!pages.has(pageUrl) && reads < 3) {
+          const routeGtin = zakazProductGtin(pageUrl);
+          if (product.ean && routeGtin && normalizeGtin(product.ean) !== normalizeGtin(routeGtin))
+            continue;
+          if (!inScope(pageUrl)) continue;
+          const relevant = titleRelevance(product, title) >= 0.35;
+          const barcodeMentioned =
+            !!product.ean &&
+            `${title} ${str(item.description)} ${pageUrl}`.includes(
+              product.ean.replace(/[\s-]/g, ''),
+            );
+          if (!relevant && !barcodeMentioned) continue;
+          if (/\/(?:categories|category|tags|search|reviews)\//i.test(new URL(pageUrl).pathname))
+            continue;
+          if (!pages.has(pageUrl) && reads < 6) {
             pages.add(pageUrl);
             reads++;
             try {
-              const result = await discoverPage(pageUrl, product, budget);
+              const result = await discoverPage(pageUrl, product);
               if (result.failure)
                 diagnostics.push(
                   sourceDiagnostic({
@@ -203,84 +310,148 @@ export async function searchWebDiscovery(
                     elapsedMs: 0,
                   }),
                 );
-              providerCandidates.push(...result.candidates);
-              if (result.conflict) conflictingPages.add(pageUrl);
-            } catch {
-              warnings.push(
-                'Карточка товара недоступна или отклонена проверкой безопасности; другие результаты проверяются.',
+              found.push(...result.candidates.filter((candidate) => inScope(candidate.pageUrl)));
+              if (result.conflict) conflicts.add(pageUrl);
+              else if (!result.candidates.length) unreadPages.add(pageUrl);
+            } catch (error) {
+              unreadPages.add(pageUrl);
+              diagnostics.push(
+                sourceDiagnostic({
+                  id: 'page-' + createHash('sha256').update(pageUrl).digest('hex').slice(0, 12),
+                  source: new URL(pageUrl).hostname,
+                  ...sourceFailureDetails(error),
+                  count: 0,
+                  elapsedMs: 0,
+                }),
               );
+              warnings.push('Карточка недоступна или отклонена проверкой безопасности.');
             }
           }
-          if (conflictingPages.has(pageUrl)) continue;
-          if (provider === 'searxng') {
-            const image = safeUrl(item.img_src);
-            if (image)
-              providerCandidates.push(...imageCandidate(image, pageUrl, title, provider, product));
-          } else {
-            // Top-level images lack page provenance: use only images associated with a result.
-            for (const entry of (Array.isArray(item.images) ? item.images : []).slice(0, 3)) {
-              const image = safeUrl(typeof entry === 'string' ? entry : obj(entry).url);
-              if (image)
-                providerCandidates.push(
-                  ...imageCandidate(image, pageUrl, title, provider, product),
+          if (!pages.has(pageUrl)) unreadPages.add(pageUrl);
+          if (conflicts.has(pageUrl)) continue;
+          const thumb = obj(item.thumbnail);
+          const tiedImages = Array.isArray(data.images)
+            ? data.images.filter((rawImage) => {
+                const imageTitle = canonicalText(str(obj(rawImage).title));
+                const pageTitle = canonicalText(title);
+                if (imageTitle.length < 12 || pageTitle.length < 12) return false;
+                const matchingPages = pageResults.filter((rawPage: unknown) => {
+                  const otherTitle = canonicalText(str(obj(rawPage).title));
+                  return (
+                    otherTitle.length >= 12 &&
+                    (imageTitle.startsWith(otherTitle) || otherTitle.startsWith(imageTitle))
+                  );
+                });
+                return (
+                  matchingPages.length === 1 &&
+                  (imageTitle.startsWith(pageTitle) || pageTitle.startsWith(imageTitle))
                 );
-            }
+              })
+            : [];
+          const images =
+            provider === 'brave'
+              ? [thumb.original || thumb.src]
+              : [
+                  ...(Array.isArray(item.images) ? item.images.slice(0, 1) : []),
+                  ...tiedImages.slice(0, 2),
+                ];
+          for (const rawImage of images) {
+            const imageUrl = safeUrl(typeof rawImage === 'string' ? rawImage : obj(rawImage).url);
+            if (imageUrl)
+              found.push(...imageCandidate(imageUrl, pageUrl, title, provider, product));
           }
         }
-        if (
-          providerCandidates.some((candidate) => {
-            const matched = matchCandidate(product, candidate);
-            return !matched.rejected && matched.candidate.gtinExact;
-          })
-        )
-          break;
+        if (await usableExact(found)) break;
       }
-      candidates.push(...providerCandidates);
-      diagnostics.push(
-        sourceDiagnostic({
-          id: provider,
-          source: names[provider],
-          status: 'ok',
-          count: providerCandidates.length,
-          elapsedMs: Date.now() - start,
-          requests,
-          message:
-            provider === 'tavily'
-              ? 'Только basic; Free/Researcher и отключённый pay-as-you-go проверены.'
-              : 'Собственный поисковый сервер; без токенов LLM.',
-        }),
-      );
-      if (providerCandidates.some((candidate) => !matchCandidate(product, candidate).rejected))
-        break;
+      if (provider === 'tavily' && !(await usableExact(found)) && unreadPages.size) {
+        const priority = (url: string) =>
+          Number(!!product.ean && url.includes(product.ean.replace(/[\s-]/g, ''))) * 2 +
+          Number(/\/(?:products|product|tovar|market-product)\//i.test(new URL(url).pathname));
+        const urls = [...unreadPages]
+          .filter((url) => !conflicts.has(url))
+          .sort((a, b) => priority(b) - priority(a))
+          .slice(0, 3);
+        if (urls.length) {
+          // Check quota again immediately before the optional one-credit batch.
+          requests++;
+          if (
+            tavilyFreeRemaining(await serviceJson(new URL('https://api.tavily.com/usage'), key)) < 1
+          )
+            throw new ApiError(429, 'Бесплатная квота извлечения карточек исчерпана.');
+          await reserveSource('api.tavily.com', 1100);
+          requests++;
+          const extracted = await serviceJson(
+            new URL('https://api.tavily.com/extract'),
+            key,
+            {
+              urls,
+              extract_depth: 'basic',
+              include_images: true,
+              format: 'markdown',
+              timeout: 10,
+              include_usage: true,
+            },
+            15000,
+          );
+          if (Array.isArray(extracted.results))
+            for (const page of extracted.results) {
+              if (!urls.includes(str(obj(page).url))) continue;
+              const evidence = extractedPageEvidence(page, product);
+              if (evidence.conflict) conflicts.add(str(obj(page).url));
+              found.push(...evidence.candidates);
+            }
+        }
+      }
     } catch (error) {
-      // Keep successful earlier query results if a later query failed.
-      candidates.push(...providerCandidates);
-      diagnostics.push(
-        sourceDiagnostic({
-          id: provider,
-          source: names[provider],
-          count: providerCandidates.length,
-          elapsedMs: Date.now() - start,
-          requests,
-          message: error instanceof ApiError ? error.message : 'Сервис поиска временно недоступен.',
-          ...sourceFailureDetails(error),
-        }),
-      );
-      if (providerCandidates.some((candidate) => !matchCandidate(product, candidate).rejected))
-        break;
+      failure = error instanceof ApiError ? error.message : 'Сервис поиска временно недоступен.';
+      failureDetails = sourceFailureDetails(error);
     }
+    candidates.push(
+      ...found
+        .filter(
+          (candidate) => inScope(candidate.pageUrl) && !matchCandidate(product, candidate).rejected,
+        )
+        .map((candidate) =>
+          selectedMarket ? { ...candidate, sourceMarket: selectedMarket } : candidate,
+        ),
+    );
+    if (failure) warnings.push(WEB_PROVIDER_NAMES[provider] + ': ' + failure);
+    diagnostics.push(
+      sourceDiagnostic({
+        id: provider,
+        source: WEB_PROVIDER_NAMES[provider],
+        status: completed ? 'ok' : 'unavailable',
+        ...failureDetails,
+        count: found.length,
+        elapsedMs: Date.now() - started,
+        requests,
+        message:
+          failure ||
+          (provider === 'brave'
+            ? 'Web Search; пустой ответ вызывает следующий запрос. До шести карточек на SKU.'
+            : 'Только basic; Free-квота и отключённый pay-as-you-go проверены.'),
+      }),
+    );
   }
-  for (const provider of configuredWebProviders())
-    if (!diagnostics.some((item) => item.id === provider))
+  for (const provider of providers)
+    if (!diagnostics.some((d) => d.id === provider))
       diagnostics.push(
         sourceDiagnostic({
           id: provider,
-          source: names[provider],
+          source: WEB_PROVIDER_NAMES[provider],
           status: 'skipped',
           count: 0,
           elapsedMs: 0,
-          message: 'Предыдущий бесплатный источник уже дал кандидатов.',
+          requests: 0,
+          message:
+            searches >= cap
+              ? 'Лимит веб-запросов для этого SKU израсходован.'
+              : 'Найден точный EAN без конфликтов; резервная квота сохранена.',
         }),
       );
-  return { candidates, diagnostics, warnings };
+  return {
+    candidates: candidates.filter((candidate) => !conflicts.has(candidate.pageUrl)),
+    diagnostics,
+    warnings: [...new Set(warnings)],
+  };
 }

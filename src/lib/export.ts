@@ -1,6 +1,7 @@
 import type { Batch, ProductRow } from './types';
 import { STATUS_LABELS } from './types';
 import { DEFAULT_SEARCH_OPTIONS } from './types';
+import { normalizeGtin } from './gtin';
 
 /** Makes a single Windows-safe stem without inventing a SKU. */
 export function safeFileStem(value: string): string {
@@ -83,6 +84,8 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
       sku: row.sku,
       internalCode: row.internalCode,
       ean: row.ean,
+      canonicalGtin: normalizeGtin(row.ean),
+      searchByName: Boolean(row.searchByName),
       nameRu: row.nameRu,
       nameRo: row.nameRo,
       brand: row.brand,
@@ -105,8 +108,11 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
       processingOverride: row.processingOverride ?? null,
       vision: row.vision ?? null,
       searchDiagnostics: row.searchDiagnostics ?? [],
+      searchCoverage: row.searchCoverage ?? null,
       searchOptions: row.lastSearchOptions ?? null,
       selectedCandidateId: row.selectedCandidateId ?? null,
+      libraryId: row.libraryId ?? null,
+      searchJobId: row.searchJobId ?? null,
       candidates: row.candidates.map((item) => ({
         id: item.id,
         title: item.title,
@@ -114,9 +120,13 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
         pageUrl: item.pageUrl,
         imageUrl: item.imageUrl,
         gtin: item.gtin ?? null,
+        sourceMarket: item.sourceMarket ?? null,
+        sourceImageHash: item.sourceImageHash ?? null,
         rights: item.rights,
         license: item.license ?? null,
         warnings: item.warnings,
+        matchStatus: item.matchStatus ?? null,
+        matchReasons: item.matchReasons ?? [],
       })),
       source: candidate
         ? {
@@ -125,6 +135,8 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
             pageUrl: candidate.pageUrl,
             imageUrl: candidate.imageUrl,
             gtin: candidate.gtin ?? null,
+            sourceMarket: candidate.sourceMarket ?? null,
+            sourceImageHash: candidate.sourceImageHash ?? null,
             rights: candidate.rights,
             license: candidate.license ?? null,
             warnings: candidate.warnings,

@@ -36,6 +36,7 @@ export function sourceFailureDetails(error: unknown): {
   status: SourceStatus;
   reason: string;
   httpStatus?: number;
+  retryAfterMs?: number;
 } {
   const value = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
   const message = typeof value.message === 'string' ? value.message : '';
@@ -75,7 +76,15 @@ export function sourceFailureDetails(error: unknown): {
   else status = 'blocked';
   const safeMessage =
     typeof value.status === 'number' || value.trustedDiagnostic === true ? message : '';
-  return { status, reason: safeMessage || reasons[status], ...(httpStatus ? { httpStatus } : {}) };
+  const retryAfterMs = value.retryAfterMs;
+  return {
+    status,
+    reason: safeMessage || reasons[status],
+    ...(httpStatus ? { httpStatus } : {}),
+    ...(typeof retryAfterMs === 'number' && retryAfterMs > 0 && Number.isFinite(retryAfterMs)
+      ? { retryAfterMs: Math.min(retryAfterMs, 86_400_000) }
+      : {}),
+  };
 }
 
 /** Normalizes stored reports from earlier versions as well as current source responses. */

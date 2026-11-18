@@ -18,10 +18,15 @@ import { GET as imageGet } from '../src/app/api/image/route';
 import { GET as configGet } from '../src/app/api/config/route';
 import { GET as sessionGet } from '../src/app/api/session/route';
 import { POST as searchPost } from '../src/app/api/search/route';
+vi.mock('../src/lib/server/source-photo', async (original) => ({
+  ...(await original<object>()),
+  checkSourcePhoto: vi.fn(async () => 'verified'),
+}));
 vi.mock('../src/lib/server/regional-search', () => ({
   searchRegionalSources: vi.fn(async () => ({ candidates: [], diagnostics: [] })),
 }));
 vi.mock('../src/lib/server/supplemental-search', () => ({
+  OPEN_CATALOGS: [],
   searchSupplementalCatalogs: vi.fn(async () => ({ candidates: [], diagnostics: [] })),
 }));
 
@@ -170,20 +175,29 @@ describe('API input and access boundaries', () => {
       ),
     ).toThrow(ApiError);
   });
-  it('blocks production APIs without password and only exposes boolean config', async () => {
+  it('blocks production APIs without password and exposes only public configuration', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('MVP_ACCESS_PASSWORD', '');
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'SECRET');
     vi.stubEnv('GEMINI_API_KEY', 'SECRET');
+    vi.stubEnv('SHELF_BUILD_COMMIT', '1'.repeat(40));
+    vi.stubEnv('SHELF_BUILD_FINGERPRINT', '2'.repeat(64));
+    vi.stubEnv('VERCEL_DEPLOYMENT_ID', 'dpl_test');
     expect((await sessionGet(new Request('https://shelf.site/api/session'))).status).toBe(503);
     expect(await (await configGet()).json()).toEqual({
       braveConfigured: false,
-      searxngConfigured: false,
+      braveFreeOnlyConfirmed: false,
       tavilyConfigured: false,
-      crawl4aiConfigured: false,
       geminiConfigured: false,
       accessProtected: false,
       serverReady: false,
+      databaseConfigured: false,
+      cloudWorkerConfigured: false,
+      build: {
+        commit: '1'.repeat(40),
+        fingerprint: '2'.repeat(64),
+        deploymentId: 'dpl_test',
+      },
     });
   });
   it('requires the configured Basic password', async () => {
@@ -193,6 +207,15 @@ describe('API input and access boundaries', () => {
       headers: { Authorization: `Basic ${Buffer.from('admin:correct').toString('base64')}` },
     });
     expect((await sessionGet(request)).status).toBe(200);
+    expect(
+      (
+        await sessionGet(
+          new Request(request.url, {
+            headers: { Authorization: `Basic ${Buffer.from('wrong:correct').toString('base64')}` },
+          }),
+        )
+      ).status,
+    ).toBe(401);
   });
   it('caps actual streamed request bytes even without content-length', async () => {
     const response = new Response(new Uint8Array(100));
@@ -326,9 +349,14 @@ describe('matching and source evidence', () => {
         .rejected,
     ).toBe(true);
   });
-  it('rejects explicit brand and quantity conflicts even with exact GTIN', () => {
+  it('rejects different products but preserves contradictory exact-GTIN metadata for review', () => {
     expect(matchCandidate(product, { ...candidate, brand: 'Other' }).rejected).toBe(true);
-    expect(matchCandidate(product, { ...candidate, quantity: '750 g' }).rejected).toBe(true);
+    const conflicting = matchCandidate(product, { ...candidate, quantity: '750 g' });
+    expect(conflicting.rejected).toBe(false);
+    expect(conflicting.candidate.matchStatus).toBe('metadata_conflict');
+    expect(
+      matchCandidate(product, { ...candidate, title: 'Nutella 750 g', quantity: '750 g' }).rejected,
+    ).toBe(true);
     expect(matchCandidate(product, candidate).rejected).toBe(false);
   });
   it('does not equate barcode query text with exact image evidence', () => {
@@ -400,28 +428,31 @@ describe('matching and source evidence', () => {
       message: expect.stringContaining('квота сохранена'),
     });
   });
-  it('reports a provider outage as an error instead of a false not-found result', async () => {
+  it('reports a provider outage as deferred instead of a false not-found result', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('', { status: 503 })),
     );
-    const result = await searchProducts(product);
-    expect(result.candidates).toEqual([]);
-    expect(result.outcome).toBe('deferred');
-    expect(result.diagnostics?.find((item) => item.id === 'food-facts')?.status).toBe('blocked');
+    await expect(searchProducts(product)).resolves.toMatchObject({
+      outcome: 'deferred',
+      candidates: [],
+    });
   });
-  it('never sends a legacy Brave key to an API in free-only mode', async () => {
+  it('never calls Brave in Moldova mode', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'server-only-key');
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
-    const result = await searchProducts({
-      ean: '',
-      nameRu: '',
-      nameRo: 'Bottle',
-      brand: '',
-      quantity: '500ml',
-    });
+    const result = await searchProducts(
+      {
+        ean: '',
+        nameRu: '',
+        nameRo: 'Bottle',
+        brand: '',
+        quantity: '500ml',
+      },
+      { mode: 'moldova', useWeb: true, webQueryLimit: 4 },
+    );
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.diagnostics?.find((source) => source.id === 'brave')).toMatchObject({
       status: 'disabled',
@@ -497,3 +528,8 @@ describe('vision result constraints', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+vi.mock('@/lib/server/sostavista-search', () => ({
+  searchSostavista: vi.fn(async () => {
+    throw new Error('offline fixture');
+  }),
+}));

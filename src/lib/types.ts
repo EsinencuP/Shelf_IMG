@@ -1,5 +1,7 @@
+import type { SupplierMarket } from './search-sources';
+
 export type RowStatus =
-  'pending' | 'searching' | 'review' | 'processing' | 'ready' | 'not_found' | 'error';
+  'pending' | 'searching' | 'review' | 'processing' | 'ready' | 'not_found' | 'deferred' | 'error';
 export type RightsStatus = 'open_license' | 'unknown' | 'user_owned';
 
 export interface Candidate {
@@ -9,12 +11,17 @@ export interface Candidate {
   quantity?: string;
   gtin?: string;
   imageUrl: string;
+  previewUrl?: string;
   pageUrl: string;
   source: string;
   rights: RightsStatus;
   license?: string;
   gtinExact: boolean;
   warnings: string[];
+  matchStatus?: 'exact' | 'probable' | 'metadata_conflict' | 'rejected';
+  matchReasons?: string[];
+  sourceMarket?: 'MD' | SupplierMarket;
+  sourceImageHash?: string;
 }
 
 export interface ProductRow {
@@ -45,7 +52,14 @@ export interface ProductRow {
   vision?: VisionResult;
   qualityWarnings: string[];
   searchDiagnostics?: SearchDiagnostic[];
+  searchCoverage?: 'complete' | 'partial';
   lastSearchOptions?: SearchOptions;
+  searchJobId?: string;
+  searchRequestKey?: string;
+  searchRefresh?: boolean;
+  searchByName?: boolean;
+  searchJobMessage?: string;
+  libraryId?: string;
   error?: string;
 }
 
@@ -71,13 +85,16 @@ export interface SearchOptions {
   useWeb: boolean;
   webQueryLimit: number;
   useCache?: boolean;
+  market?: SupplierMarket;
 }
 
 export const DEFAULT_SEARCH_OPTIONS: SearchOptions = {
   mode: 'expanded',
   useWeb: true,
   webQueryLimit: 4,
+  useCache: true,
 };
+export const MAX_JOB_SUBMISSION = 1000;
 
 export type ImportField =
   | 'sku'
@@ -104,6 +121,8 @@ export interface SearchResponse {
   /** Current server execution, including cache lookup and orchestration (not a sum of source times). */
   elapsedMs?: number;
   outcome?: 'found' | 'review' | 'not_found' | 'deferred';
+  coverage?: 'complete' | 'partial';
+  retryable?: boolean;
 }
 export type SourceStatus =
   'ok' | 'empty' | 'blocked' | 'timeout' | 'quota' | 'parse_error' | 'disabled' | 'relay_offline';
@@ -119,15 +138,18 @@ export interface SearchDiagnostic {
   /** Human-readable reason; optional only for older saved batches. */
   reason?: string;
   httpStatus?: number;
+  retryAfterMs?: number;
 }
 export interface AppConfig {
   braveConfigured: boolean;
-  searxngConfigured?: boolean;
+  braveFreeOnlyConfirmed?: boolean;
   tavilyConfigured?: boolean;
-  crawl4aiConfigured?: boolean;
   geminiConfigured: boolean;
   accessProtected: boolean;
   serverReady?: boolean;
+  databaseConfigured?: boolean;
+  cloudWorkerConfigured?: boolean;
+  build?: { commit: string | null; fingerprint: string | null; deploymentId: string | null };
 }
 export interface VisionResult {
   verdict: 'consistent' | 'conflict' | 'uncertain';
@@ -151,5 +173,6 @@ export const STATUS_LABELS: Record<RowStatus, string> = {
   processing: 'Обработка',
   ready: 'Готово',
   not_found: 'Не найдено',
+  deferred: 'Повторить позже',
   error: 'Ошибка',
 };

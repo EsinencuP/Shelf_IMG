@@ -8,10 +8,15 @@ test('search and JPEG defaults persist before importing; settings fit mobile and
   await page.goto('/');
   await page.getByRole('button', { name: 'Настройки', exact: true }).click();
   const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('combobox', { name: 'Источники поиска', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(dialog.getByLabel('Использовать сохранённые результаты поиска')).toBeChecked();
+  await dialog.getByLabel('Использовать сохранённые результаты поиска').uncheck();
   await dialog.getByRole('combobox', { name: 'Режим поиска', exact: true }).selectOption('moldova');
   await dialog.getByLabel('Качество JPEG').selectOption('0.9');
   await dialog.getByLabel('Обработка фона').selectOption('white');
-  await expect(dialog.getByLabel('Лимит веб-запросов на SKU')).toBeDisabled();
+  await expect(dialog.getByLabel('Лимит веб-запросов на SKU')).toBeEnabled();
   expect(
     (
       await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
@@ -28,6 +33,10 @@ test('search and JPEG defaults persist before importing; settings fit mobile and
   await dialog.getByRole('button', { name: 'Готово', exact: true }).click();
   await page.reload();
   await page.getByRole('button', { name: 'Настройки', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Источники поиска', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(dialog.getByLabel('Использовать сохранённые результаты поиска')).not.toBeChecked();
   await expect(dialog.getByRole('combobox', { name: 'Режим поиска', exact: true })).toHaveValue(
     'moldova',
   );
@@ -74,9 +83,20 @@ test('batch search snapshot, per-SKU expanded retry, guided approval and JPG inv
   await page.getByRole('button', { name: 'Найти изображения', exact: true }).click();
   await expect(page.locator('.status-not_found')).toHaveCount(2);
   expect(searches.map((item) => item.searchOptions)).toEqual([
-    { mode: 'moldova', useWeb: true, webQueryLimit: 4 },
-    { mode: 'moldova', useWeb: true, webQueryLimit: 4 },
+    {
+      mode: 'moldova',
+      useWeb: true,
+      webQueryLimit: 4,
+      useCache: true,
+    },
+    {
+      mode: 'moldova',
+      useWeb: true,
+      webQueryLimit: 4,
+      useCache: true,
+    },
   ]);
+  expect(searches.map((item) => item.refresh)).toEqual([false, false]);
   await page.getByRole('button', { name: 'Открыть FIRST', exact: true }).click();
   const review = page.locator('aside.review-pane');
   await review.getByRole('button', { name: 'Расширить поиск для SKU', exact: true }).click();
@@ -86,7 +106,9 @@ test('batch search snapshot, per-SKU expanded retry, guided approval and JPG inv
     mode: 'expanded',
     useWeb: true,
     webQueryLimit: 4,
+    useCache: true,
   });
+  expect(searches.at(-1)?.refresh).toBe(true);
   await expect(page.locator('.batch-search-controls')).toContainText('Молдова');
   const buffer = await sharp(
     Buffer.from(

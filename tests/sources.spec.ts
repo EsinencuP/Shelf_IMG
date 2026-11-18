@@ -51,14 +51,18 @@ test('Moldova source directory and saved per-source diagnostics are usable', asy
   await dialog.getByLabel('Наименование RU').fill('Тест поиска');
   await dialog.getByRole('button', { name: 'Найти фотографии', exact: true }).click();
   await expect(page.locator('.status-not_found')).toBeVisible();
-  const details = page.locator('.search-diagnostics');
+  const details = page.locator('.search-diagnostics').filter({ hasText: 'Поиск по источникам' });
   await details.locator('summary').click();
   await expect(details.getByText('METRO Moldova', { exact: true })).toBeVisible();
   await expect(details.getByText('Нет ключа или адреса сервиса.', { exact: true })).toBeVisible();
   await expect(page.getByText('Сохранено в браузере', { exact: false })).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: 'Открыть DIAGNOSTIC', exact: true }).click();
-  await page.locator('.search-diagnostics summary').click();
+  await page
+    .locator('.search-diagnostics')
+    .filter({ hasText: 'Поиск по источникам' })
+    .locator('summary')
+    .click();
   await expect(
     page.locator('.search-diagnostics').getByText('METRO Moldova', { exact: true }),
   ).toBeVisible();

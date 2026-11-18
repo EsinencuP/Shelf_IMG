@@ -3,10 +3,39 @@ import AxeBuilder from '@axe-core/playwright';
 import JSZip from 'jszip';
 import sharp from 'sharp';
 import ExcelJS from 'exceljs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const csv =
   'SKU;Внутренний код;EAN;Наименование RU;Наименование RO;Ширина мм;Высота мм;Глубина мм\n00123;INT-123;;Тестовая бутылка 500 мл;Sticla test 500 ml;70;205;70\n00200;;;;Produs fara fotografie;80;100;80\n';
+
+test('supplier folder links exact filenames and restores the unconfirmed photo', async ({
+  page,
+}, testInfo) => {
+  const folder = testInfo.outputPath('supplier');
+  await mkdir(folder, { recursive: true });
+  const png = await sharp({
+    create: { width: 50, height: 70, channels: 3, background: '#123456' },
+  })
+    .png()
+    .toBuffer();
+  await writeFile(join(folder, '00123.png'), png);
+  await writeFile(join(folder, 'unused.png'), png);
+  await page.goto('/');
+  await page.getByLabel('Загрузить Excel или CSV').setInputFiles({
+    name: 'supplier.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv),
+  });
+  await page.getByRole('button', { name: 'Импортировать 2 SKU', exact: true }).click();
+  await page.getByLabel('Папка с фото поставщика').setInputFiles(folder);
+  await expect(page.locator('.status-review')).toHaveCount(1);
+  await expect(page.getByText(/Фото поставщика добавлено на проверку: 1/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Открыть 00123', exact: true }).click();
+  await expect(page.getByAltText('Исходная фотография товара')).toBeVisible();
+  await expect(page.locator('.status-ready')).toHaveCount(0);
+});
 
 test('empty screen is accessible, keyboard usable and fits desktop/mobile', async ({
   page,

@@ -12,9 +12,12 @@ export function recordSearchTiming(
       event: 'shelf.search',
       requestId,
       region: process.env.VERCEL_REGION || 'local',
+      commit: process.env.SHELF_BUILD_COMMIT || null,
+      fingerprint: process.env.SHELF_BUILD_FINGERPRINT || null,
       httpStatus,
       elapsedMs: Math.max(0, Math.round(elapsedMs)),
       outcome: result?.outcome ?? (httpStatus >= 400 ? 'error' : 'unknown'),
+      coverage: result?.coverage ?? null,
       sources: (result?.diagnostics ?? []).map(({ id, status, count, elapsedMs, httpStatus }) => ({
         id,
         status,

@@ -12,3 +12,15 @@ playwright-report/
 .DS_Store
 public/onnx/
 infra/free-search/settings.local.yml
+infra/free-search/run/
+infra/free-search/runtime/
+infra/ddgs/.venv/
+infra/ddgs/.cache/
+infra/ddgs/__pycache__/
+infra/ddgs/*.log
+worker/data/
+worker/storage/
+
+.local-archive/
+.runtime/
+.vercel

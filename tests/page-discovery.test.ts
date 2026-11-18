@@ -1,16 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { discoverPage } from '@/lib/server/page-discovery';
-import { publicGet, resolvePublicUrl } from '@/lib/server/public-fetch';
-import { serviceJson } from '@/lib/server/discovery-services';
-
+import { publicGet } from '@/lib/server/public-fetch';
 vi.mock('@/lib/server/public-fetch', async (original) => ({
   ...(await original<typeof import('@/lib/server/public-fetch')>()),
   publicGet: vi.fn(),
-  resolvePublicUrl: vi.fn(),
 }));
-vi.mock('@/lib/server/discovery-services', async (original) => ({
-  ...(await original<typeof import('@/lib/server/discovery-services')>()),
-  serviceJson: vi.fn(),
+vi.mock('@/lib/server/catalog-utils', async (original) => ({
+  ...(await original<typeof import('@/lib/server/catalog-utils')>()),
+  paced: async (_host: string, _interval: number, job: () => Promise<unknown>) => job(),
 }));
 const product = {
   ean: '3017620422003',
@@ -19,83 +16,64 @@ const product = {
   brand: 'Ferrero',
   quantity: '400g',
 };
-const url = 'https://shop.md/nutella';
-const html =
-  '<script type="application/ld+json">{"@type":"Product","name":"Nutella 400 g","brand":"Ferrero","gtin13":"3017620422003","image":"/front.jpg"}</script>';
-function setup(status = 200, content = '<div id="app"></div>') {
-  vi.stubEnv('CRAWL4AI_URL', 'https://crawler.shelf.org');
-  vi.stubEnv('CRAWL4AI_API_TOKEN', 'secret');
-  vi.stubEnv('CRAWL4AI_ALLOWED_HOSTS', 'shop.md');
+function page(status: number, quantity = '400 g') {
   vi.mocked(publicGet).mockResolvedValue({
     status,
-    url,
-    body: Buffer.from(content),
+    url: 'https://shop.md/item',
     headers: { 'content-type': 'text/html' },
+    body: Buffer.from(
+      '<script type="application/ld+json">' +
+        JSON.stringify({
+          '@type': 'Product',
+          name: 'Nutella ' + quantity,
+          brand: 'Ferrero',
+          gtin13: product.ean,
+          image: '/front.jpg',
+          size: quantity,
+        }) +
+        '</script>',
+    ),
   });
-  vi.mocked(serviceJson).mockResolvedValue({ results: [{ success: true, url, html }] });
 }
-afterEach(() => {
-  vi.resetAllMocks();
-  vi.unstubAllEnvs();
+afterEach(() => vi.resetAllMocks());
+it('extracts exact Product from SSR HTML without a browser', async () => {
+  page(200);
+  const r = await discoverPage('https://shop.md/item', product);
+  expect(r.candidates[0].gtinExact).toBe(true);
+  expect(r.rendered).toBe(false);
 });
-describe('Crawl4AI bounded extraction', () => {
-  it('extracts Product JSON-LD from rendered HTML, not arbitrary images or markdown', async () => {
-    setup();
-    const budget = { rendered: 0 };
-    const result = await discoverPage(url, product, budget);
-    expect(result.candidates[0]).toMatchObject({
-      gtinExact: true,
-      imageUrl: 'https://shop.md/front.jpg',
-    });
-    expect(budget.rendered).toBe(1);
-    expect(resolvePublicUrl).toHaveBeenCalledWith(url);
-    expect(vi.mocked(serviceJson).mock.calls[0][2]).toMatchObject({
-      urls: [url],
-      crawler_config: { params: { check_robots_txt: true, screenshot: false, pdf: false } },
-    });
+it.each([403, 429, 500])('does not retry failed HTML %s', async (status) => {
+  page(status);
+  expect((await discoverPage('https://shop.md/item', product)).candidates).toEqual([]);
+  expect(publicGet).toHaveBeenCalledTimes(1);
+});
+it('preserves a quantity contradiction', async () => {
+  page(200, '1 kg');
+  expect((await discoverPage('https://shop.md/item', product)).conflict).toBe(true);
+});
+it('extracts a matching photo from Open Graph without asserting an unproven EAN', async () => {
+  vi.mocked(publicGet).mockResolvedValue({
+    status: 200,
+    url: 'https://shop.md/item',
+    headers: { 'content-type': 'text/html' },
+    body: Buffer.from('<h1>Nutella 400 g</h1><meta property="og:image" content="/front.jpg">'),
   });
-  it('skips Chromium when plain HTML already contains the product', async () => {
-    setup(200, html);
-    expect((await discoverPage(url, product, { rendered: 0 })).candidates).toHaveLength(1);
-    expect(serviceJson).not.toHaveBeenCalled();
+  const r = await discoverPage('https://shop.md/item', product);
+  expect(r.candidates[0].imageUrl).toBe('https://shop.md/front.jpg');
+  expect(r.candidates[0].gtinExact).toBe(false);
+});
+it('never extracts a generic Open Graph photo from an unrelated page', async () => {
+  vi.mocked(publicGet).mockResolvedValue({
+    status: 200,
+    url: 'https://shop.md/item',
+    headers: { 'content-type': 'text/html' },
+    body: Buffer.from('<h1>Potatoes</h1><meta property="og:image" content="/front.jpg">'),
   });
-  it.each([403, 429, 500])(
-    'does not retry a blocked/unavailable source through a browser (%s)',
-    async (status) => {
-      setup(status);
-      expect((await discoverPage(url, product, { rendered: 0 })).candidates).toHaveLength(0);
-      expect(serviceJson).not.toHaveBeenCalled();
-    },
-  );
-  it('requires an exact allowlisted hostname and one-page budget', async () => {
-    setup();
-    vi.stubEnv('CRAWL4AI_ALLOWED_HOSTS', 'other.md');
-    await discoverPage(url, product, { rendered: 0 });
-    expect(serviceJson).not.toHaveBeenCalled();
-    vi.stubEnv('CRAWL4AI_ALLOWED_HOSTS', 'shop.md');
-    await discoverPage(url, product, { rendered: 1 });
-    expect(serviceJson).not.toHaveBeenCalled();
-  });
-  it('does not delegate DNS rejected by the public-address guard', async () => {
-    setup();
-    vi.mocked(resolvePublicUrl).mockRejectedValue(new Error('private DNS'));
-    await expect(discoverPage(url, product, { rendered: 0 })).rejects.toThrow();
-    expect(serviceJson).not.toHaveBeenCalled();
-  });
-  it('rejects redirected or unrelated result provenance', async () => {
-    setup();
-    vi.mocked(serviceJson).mockResolvedValue({
-      results: [{ success: true, url, redirected_url: 'https://other.md', html }],
-    });
-    expect((await discoverPage(url, product, { rendered: 0 })).candidates).toHaveLength(0);
-  });
-  it('rejects another variant even if it is returned by the crawler', async () => {
-    setup();
-    vi.mocked(serviceJson).mockResolvedValue({
-      results: [{ success: true, url, html: html.replace('3017620422003', '4840053004404') }],
-    });
-    const result = await discoverPage(url, product, { rendered: 0 });
-    expect(result.conflict).toBe(true);
-    expect(result.candidates[0].gtin).toBe('4840053004404');
-  });
+  expect((await discoverPage('https://shop.md/item', product)).candidates).toEqual([]);
+});
+it('skips category pages before any fetch', async () => {
+  expect(
+    (await discoverPage('https://metro.zakaz.md/ro/categories/milk/tm=jlc/', product)).candidates,
+  ).toEqual([]);
+  expect(publicGet).not.toHaveBeenCalled();
 });

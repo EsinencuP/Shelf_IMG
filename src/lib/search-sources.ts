@@ -21,6 +21,17 @@ export const REGIONAL_SOURCES = [
   { id: 'tavria-ua', name: 'Таврия В', domain: 'tavriav.zakaz.ua', kind: 'direct', region: 'UA' },
 ] as const;
 
+export const SUPPLIER_MARKETS = {
+  UA: { label: 'Украина', domains: ['silpo.ua', 'varus.ua', 'roshen.com', 'zakaz.ua'] },
+  RO: { label: 'Румыния', domains: ['auchan.ro', 'carrefour.ro', 'mega-image.ro', 'sezamo.ro'] },
+} as const;
+
+export type SupplierMarket = keyof typeof SUPPLIER_MARKETS;
+
+export function isSupplierMarket(value: unknown): value is SupplierMarket {
+  return typeof value === 'string' && Object.hasOwn(SUPPLIER_MARKETS, value);
+}
+
 // These domains guide indexed discovery; they are not represented as working direct integrations.
 export const INDEXED_DOMAINS = [
   'linella.md',

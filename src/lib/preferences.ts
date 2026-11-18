@@ -4,6 +4,7 @@ import {
   type ExportProfile,
   type SearchOptions,
 } from './types';
+import { isSupplierMarket } from './search-sources';
 
 export interface Preferences {
   profile: ExportProfile;
@@ -14,6 +15,21 @@ export const DEFAULT_PREFERENCES: Preferences = {
   profile: DEFAULT_PROFILE,
   search: DEFAULT_SEARCH_OPTIONS,
 };
+
+/** Restore old batches and preferences without losing newly introduced defaults. */
+export function restoreSearchOptions(value?: Partial<SearchOptions>): SearchOptions {
+  const webQueryLimit = value?.webQueryLimit;
+  return {
+    mode: value?.mode === 'moldova' ? 'moldova' : 'expanded',
+    useWeb: typeof value?.useWeb === 'boolean' ? value.useWeb : true,
+    webQueryLimit:
+      typeof webQueryLimit === 'number' && [1, 2, 4, 6].includes(webQueryLimit)
+        ? webQueryLimit
+        : DEFAULT_SEARCH_OPTIONS.webQueryLimit,
+    useCache: typeof value?.useCache === 'boolean' ? value.useCache : true,
+    ...(isSupplierMarket(value?.market) ? { market: value.market } : {}),
+  };
+}
 
 /** Browser-only defaults, separate from each batch; never store API keys or passwords. */
 export function readPreferences(): Preferences {
@@ -30,11 +46,7 @@ export function readPreferences(): Preferences {
         method: p.method === 'white' ? 'white' : 'ai',
         background: '#ffffff',
       },
-      search: {
-        mode: s.mode === 'moldova' ? 'moldova' : 'expanded',
-        useWeb: typeof s.useWeb === 'boolean' ? s.useWeb : true,
-        webQueryLimit: [1, 2, 4, 6].includes(s.webQueryLimit) ? s.webQueryLimit : 4,
-      },
+      search: restoreSearchOptions(s),
     };
   } catch {
     return DEFAULT_PREFERENCES;

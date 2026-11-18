@@ -14,15 +14,18 @@ import {
   Search,
 } from 'lucide-react';
 import type { Candidate, ExportProfile, ProductRow, VisionResult } from '@/lib/types';
-import { apiFetch } from '@/lib/client-api';
+import { apiFetch, candidateImageEndpoint } from '@/lib/client-api';
 import { safeFileStem, downloadBlob } from '@/lib/export';
 import BlobImage from './blob-image';
+import CandidatePhoto from './candidate-photo';
 import { isSourceFailure, sourceDiagnostic, SOURCE_STATUS_LABELS } from '@/lib/source-status';
+import { canSearchByName, rowSearchError, rowSearchProduct, rowTitle } from '@/lib/row-search';
 
 export default function ReviewPane({
   row,
   profile,
   geminiConfigured,
+  databaseConfigured,
   onPatch,
   onClose,
   onNotice,
@@ -35,23 +38,29 @@ export default function ReviewPane({
   row: ProductRow;
   profile: ExportProfile;
   geminiConfigured: boolean;
+  databaseConfigured?: boolean;
   disabled: boolean;
   onPatch: (id: string, patch: Partial<ProductRow>) => void;
   onClose: () => void;
   onNotice: (message: string, error?: boolean) => void;
   onBusy: (busy: boolean) => void;
   onNext?: () => void;
-  onSearch: (expanded: boolean) => void;
+  onSearch: (expanded: boolean, byName?: boolean) => void;
   searchMode: 'moldova' | 'expanded';
 }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [url, setUrl] = useState('');
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const candidateImages = useRef(new Map<Candidate, Blob>());
   useEffect(() => {
     setUrl('');
     headingRef.current?.focus({ preventScroll: false });
   }, [row.id]);
+  useEffect(() => {
+    const images = candidateImages.current;
+    return () => images.clear();
+  }, [row.candidates]);
   const vision = row.vision;
   function working(value: boolean) {
     setBusy(value);
@@ -59,7 +68,9 @@ export default function ReviewPane({
   }
   const candidate = row.candidates.find((item) => item.id === row.selectedCandidateId);
   const sourceDiagnostics = (row.searchDiagnostics ?? []).map(sourceDiagnostic);
-  const validIdentity = !!row.sku.trim() && !!(row.nameRu.trim() || row.nameRo.trim());
+  const inputError = rowSearchError(row);
+  const nameSearch = canSearchByName(row);
+  const validIdentity = !inputError || nameSearch;
   const locked = busy || disabled;
   const patch = (value: Partial<ProductRow>) => onPatch(row.id, value);
 
@@ -67,8 +78,9 @@ export default function ReviewPane({
     working(true);
     setProgress('Загружаем исходную фотографию…');
     try {
-      const response = await apiFetch(`/api/image?url=${encodeURIComponent(item.imageUrl)}`);
-      const blob = await response.blob();
+      const blob =
+        candidateImages.current.get(item) ??
+        (await (await apiFetch(candidateImageEndpoint(item))).blob());
       patch({
         originalBlob: blob,
         outputBlob: undefined,
@@ -89,14 +101,87 @@ export default function ReviewPane({
     }
   }
 
+  async function approve(next = false) {
+    if (!row.outputBlob || !row.rightsConfirmed || !validIdentity || vision?.verdict === 'conflict')
+      return;
+    working(true);
+    setProgress('Сохраняем подтверждённое изображение…');
+    let savedId: string | undefined;
+    let saveError: string | undefined;
+    try {
+      if (databaseConfigured && candidate) {
+        const bytes = new Uint8Array(await row.outputBlob.arrayBuffer());
+        if (bytes.length > 2_097_152)
+          throw new Error('Фото больше 2 МБ: экспорт доступен, общая база не пополнена.');
+        const parts: string[] = [];
+        for (let i = 0; i < bytes.length; i += 8192)
+          parts.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
+        const response = await apiFetch('/api/library', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product: rowSearchProduct(row, nameSearch),
+            candidate,
+            confirmed: true,
+            rightsConfirmed: true,
+            image: btoa(parts.join('')),
+          }),
+        });
+        savedId = (await response.json()).id;
+      }
+    } catch (error) {
+      saveError = error instanceof Error ? error.message : 'Не удалось сохранить в общий каталог.';
+    } finally {
+      working(false);
+      setProgress('');
+    }
+    patch({ status: 'ready', confirmed: true, libraryId: savedId });
+    onNotice(
+      saveError
+        ? 'Фото добавлено в экспорт. Общий каталог: ' + saveError
+        : databaseConfigured
+          ? 'Фото подтверждено, сохранено в общий каталог и добавлено в экспорт.'
+          : 'Изображение подтверждено и добавлено в экспорт.',
+      !!saveError,
+    );
+    if (next) onNext?.();
+  }
+
   async function upload(file?: File) {
     if (!file) return;
     if (
-      !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) ||
+      ![
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/avif',
+        'image/gif',
+        'image/tiff',
+        'image/x-tiff',
+      ].includes(file.type) ||
       file.size > 4 * 1024 * 1024
     ) {
-      onNotice('Загрузите JPG, PNG или WebP размером до 4 МБ.', true);
+      onNotice('Загрузите JPG, PNG, WebP, AVIF, статический GIF или TIFF размером до 4 МБ.', true);
       return;
+    }
+    let original: Blob = file;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      working(true);
+      setProgress('Преобразуем формат фотографии в облаке…');
+      try {
+        const response = await apiFetch('/api/image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: file,
+        });
+        original = await response.blob();
+      } catch (error) {
+        onNotice(error instanceof Error ? error.message : 'Не удалось преобразовать фото.', true);
+        return;
+      } finally {
+        working(false);
+        setProgress('');
+      }
     }
     const item: Candidate = {
       id: crypto.randomUUID(),
@@ -111,7 +196,7 @@ export default function ReviewPane({
     patch({
       candidates: [...row.candidates, item],
       selectedCandidateId: item.id,
-      originalBlob: file,
+      originalBlob: original,
       outputBlob: undefined,
       status: 'review',
       confirmed: false,
@@ -130,7 +215,7 @@ export default function ReviewPane({
         throw new Error('Используйте HTTPS-ссылку на JPG, PNG или WebP.');
       const item: Candidate = {
         id: crypto.randomUUID(),
-        title: row.nameRu || row.nameRo,
+        title: rowTitle(row),
         imageUrl: parsed.href,
         pageUrl: parsed.href,
         source: 'Добавлено по ссылке',
@@ -265,7 +350,7 @@ export default function ReviewPane({
           Следующий SKU <ArrowRight size={14} />
         </button>
       )}
-      <p className="review-name">{row.nameRu || row.nameRo}</p>
+      <p className="review-name">{rowTitle(row)}</p>
       {row.nameRu && row.nameRo && <p className="muted small">{row.nameRo}</p>}
       <div className="product-attributes">
         <span>
@@ -287,15 +372,21 @@ export default function ReviewPane({
         )}
       </div>
       {!!row.inputWarnings?.length && (
-        <div className="notice-inline">
-          <AlertCircle size={15} />
-          <span>{row.inputWarnings.join(' ')}</span>
-        </div>
+        <details className="search-diagnostics">
+          <summary>Проверка данных Excel ({row.inputWarnings.length})</summary>
+          <p>{row.inputWarnings.join(' ')}</p>
+        </details>
       )}
       {!row.originalBlob && row.error && (
         <div className="notice-inline danger">
           <AlertCircle size={15} />
           <span>{row.error}</span>
+        </div>
+      )}
+      {row.searchJobMessage && (
+        <div className="notice-inline" role="status">
+          <Loader2 size={15} className="spin" />
+          <span>{row.searchJobMessage}. Вкладку можно закрыть.</span>
         </div>
       )}
       {!row.originalBlob && row.qualityWarnings.length > 0 && (
@@ -331,12 +422,25 @@ export default function ReviewPane({
       }
       {!row.originalBlob && (
         <>
+          {row.searchCoverage === 'partial' && row.candidates.length > 0 && (
+            <p className="muted small">
+              Поиск неполный. Некоторые источники пропущены или недоступны.
+            </p>
+          )}
           <div className="review-actions">
-            <button className="button secondary" disabled={locked} onClick={() => onSearch(false)}>
+            <button
+              className="button secondary"
+              disabled={locked || (!!inputError && !nameSearch)}
+              onClick={() => onSearch(false, nameSearch)}
+            >
               <Search size={15} />
-              {row.searchDiagnostics?.length ? 'Повторить поиск' : 'Найти фотографии'}
+              {nameSearch
+                ? 'Искать по названию'
+                : row.searchDiagnostics?.length
+                  ? 'Повторить поиск'
+                  : 'Найти фотографии'}
             </button>
-            {searchMode === 'moldova' && (
+            {searchMode === 'moldova' && !inputError && (
               <button className="text-button" disabled={locked} onClick={() => onSearch(true)}>
                 Расширить поиск для SKU
               </button>
@@ -350,7 +454,7 @@ export default function ReviewPane({
             <div className="candidate-grid">
               {row.candidates
                 .filter((item) => item.imageUrl)
-                .map((item) => (
+                .map((item, index) => (
                   <button
                     key={item.id}
                     className="candidate-card"
@@ -358,17 +462,20 @@ export default function ReviewPane({
                     onClick={() => chooseCandidate(item)}
                   >
                     <div className="candidate-photo">
-                      <img
-                        src={item.imageUrl}
-                        alt={item.title}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
+                      <CandidatePhoto
+                        candidate={item}
+                        prefetch={index < 3}
+                        images={candidateImages}
                       />
                     </div>
                     <span>{item.source}</span>
                     <strong>{item.title}</strong>
                     <small className={item.gtinExact ? 'good-text' : 'muted'}>
-                      {item.gtinExact ? 'EAN карточки совпадает' : 'Требуется проверка'}
+                      {item.matchStatus === 'metadata_conflict'
+                        ? 'EAN совпадает · конфликт данных'
+                        : item.gtinExact
+                          ? 'EAN карточки совпадает'
+                          : 'Требуется проверка'}
                     </small>
                   </button>
                 ))}
@@ -455,7 +562,7 @@ export default function ReviewPane({
             >
               <option value="">Как в настройках партии</option>
               <option value="white">Обрезка светлого фона — сохранить упаковку</option>
-              <option value="ai">Локальная нейросеть</option>
+              <option value="ai">Нейросеть в браузере</option>
             </select>
           </label>
           <button
@@ -550,10 +657,7 @@ export default function ReviewPane({
                       !row.rightsConfirmed ||
                       vision?.verdict === 'conflict'
                     }
-                    onClick={() => {
-                      patch({ status: 'ready', confirmed: true });
-                      onNotice('Изображение подтверждено и добавлено в экспорт.');
-                    }}
+                    onClick={() => void approve()}
                   >
                     <Check size={17} />
                     Подтвердить для экспорта
@@ -567,11 +671,7 @@ export default function ReviewPane({
                         !row.rightsConfirmed ||
                         vision?.verdict === 'conflict'
                       }
-                      onClick={() => {
-                        patch({ status: 'ready', confirmed: true });
-                        onNext();
-                        onNotice('Изображение подтверждено. Открыт следующий SKU.');
-                      }}
+                      onClick={() => void approve(true)}
                     >
                       Подтвердить и перейти дальше <ArrowRight size={16} />
                     </button>
@@ -596,7 +696,7 @@ export default function ReviewPane({
             Загрузить свою фотографию
             <input
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/jpeg,image/png,image/webp,image/avif,image/gif,image/tiff,image/x-tiff"
               disabled={locked}
               onChange={(event) => {
                 void upload(event.target.files?.[0]);
@@ -604,7 +704,7 @@ export default function ReviewPane({
               }}
             />
           </label>
-          <span className="muted small">JPG, PNG или WebP · до 4 МБ</span>
+          <span className="muted small">JPG, PNG, WebP, AVIF, GIF или TIFF · до 4 МБ</span>
           <label className="field-label" htmlFor="image-url">
             Или прямая ссылка на изображение
           </label>

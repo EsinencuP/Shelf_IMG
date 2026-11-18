@@ -1,9 +1,14 @@
 import type { Cell, CellValue } from 'exceljs';
 import type { ColumnMapping, ImportField, ParsedSheet, ProductRow } from './types';
+import { MAX_JOB_SUBMISSION } from './types';
 import { safeFileStem, downloadBlob } from './export';
+import { eanIssue } from './gtin';
+import { rowSearchError } from './row-search';
+
+export { eanIssue } from './gtin';
 
 const MAX_BYTES = 10 * 1024 * 1024;
-const MAX_ROWS = 500;
+export const MAX_IMPORT_ROWS = MAX_JOB_SUBMISSION;
 const MAX_COLUMNS = 50;
 type SheetDetails = ParsedSheet & {
   sourceRows?: number[];
@@ -204,7 +209,7 @@ function validateXlsxArchive(buffer: ArrayBuffer) {
       (expanded > 2 * 1024 * 1024 && expanded / Math.max(compressed, 1) > 200)
     ) {
       throw new Error(
-        'XLSX слишком велик после распаковки. Удалите изображения и лишние листы, оставив до 500 товаров.',
+        `XLSX слишком велик после распаковки. Удалите изображения и лишние листы, оставив до ${MAX_IMPORT_ROWS} товаров.`,
       );
     }
     offset += 46 + nameLength + extraLength + commentLength;
@@ -271,7 +276,8 @@ function csvRecords(text: string, delimiter: string): { values: string[]; line: 
     endField();
     records.push({ values: fields, line: startLine });
     fields = [];
-    if (records.length > MAX_ROWS + 100) throw new Error('В CSV больше 500 товарных строк.');
+    if (records.length > MAX_IMPORT_ROWS + 100)
+      throw new Error(`В CSV больше ${MAX_IMPORT_ROWS} товарных строк.`);
   };
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
@@ -343,8 +349,10 @@ function finishSheet(
     .filter((record) => record.values.some((value) => value.trim()));
   for (const record of data) width = Math.max(width, record.values.length);
   if (width > MAX_COLUMNS) throw new Error('В файле больше 50 колонок.');
-  if (data.length > MAX_ROWS)
-    throw new Error('В файле больше 500 товарных строк. Разделите его на несколько партий.');
+  if (data.length > MAX_IMPORT_ROWS)
+    throw new Error(
+      `В файле больше ${MAX_IMPORT_ROWS} товарных строк. Разделите его на несколько партий.`,
+    );
   if (!data.length) throw new Error('Есть заголовки, но нет товаров.');
   const headers = Array.from(
     { length: width },
@@ -391,9 +399,9 @@ export async function parseFile(file: File): Promise<ParsedSheet> {
   }
   const worksheet = workbook.worksheets[0];
   if (!worksheet) throw new Error('XLSX не содержит листов.');
-  if (worksheet.columnCount > MAX_COLUMNS || worksheet.rowCount > MAX_ROWS + 1)
+  if (worksheet.columnCount > MAX_COLUMNS || worksheet.rowCount > MAX_IMPORT_ROWS + 1)
     throw new Error(
-      'Первый лист должен содержать не больше 50 колонок и 500 строк товаров. Удалите лишнее форматирование или разделите файл.',
+      `Первый лист должен содержать не больше 50 колонок и ${MAX_IMPORT_ROWS} строк товаров. Удалите лишнее форматирование или разделите файл.`,
     );
   const warnings: string[] =
     workbook.worksheets.length > 1
@@ -429,25 +437,17 @@ export async function parseFile(file: File): Promise<ParsedSheet> {
   );
 }
 
-/** Returns an explanation for invalid GTIN; an empty value is permitted for name search. */
-export function eanIssue(value: string): string | undefined {
-  if (!value) return undefined;
-  if (!/^\d+$/.test(value))
-    return 'EAN должен содержать только цифры. Значение сохранено без исправлений.';
-  if (![8, 12, 13, 14].includes(value.length))
-    return 'Допустимая длина GTIN: 8, 12, 13 или 14 цифр. Значение сохранено без исправлений.';
-  let sum = 0;
-  for (let i = value.length - 2, weight = 3; i >= 0; i--, weight = weight === 3 ? 1 : 3)
-    sum += Number(value[i]) * weight;
-  if ((10 - (sum % 10)) % 10 !== Number(value.at(-1)))
-    return 'Неверная контрольная цифра EAN. Значение сохранено без исправлений; проверьте исходную таблицу.';
-  return undefined;
+export function hasProductMapping(mapping: ColumnMapping): boolean {
+  return (
+    mapping.sku !== undefined &&
+    (mapping.ean !== undefined || mapping.nameRu !== undefined || mapping.nameRo !== undefined)
+  );
 }
 
 /** Creates all imported rows, preserving invalid rows and diagnostics for the report. */
 export function createRows(sheet: ParsedSheet, mapping: ColumnMapping): ProductRow[] {
-  if (mapping.sku === undefined || (mapping.nameRu === undefined && mapping.nameRo === undefined))
-    throw new Error('Укажите колонку SKU и хотя бы одно наименование (RU или RO).');
+  if (!hasProductMapping(mapping))
+    throw new Error('Укажите колонку SKU и колонку GTIN или наименования RU/RO.');
   for (const index of Object.values(mapping))
     if (
       index !== undefined &&
@@ -497,7 +497,9 @@ export function createRows(sheet: ParsedSheet, mapping: ColumnMapping): ProductR
         );
       return number;
     };
-    const missing = [!sku && 'SKU', !nameRu && !nameRo && 'наименование'].filter(Boolean);
+    const brand = get('brand');
+    const quantity = get('quantity');
+    const error = rowSearchError({ sku, ean, nameRu, nameRo, brand, quantity });
     const internalCode = get('internalCode');
     if (sku && safeFileStem(sku) !== sku)
       qualityWarnings.push(
@@ -513,15 +515,15 @@ export function createRows(sheet: ParsedSheet, mapping: ColumnMapping): ProductR
       ean,
       nameRu,
       nameRo,
-      brand: get('brand'),
-      quantity: get('quantity'),
+      brand,
+      quantity,
       widthMm: dimension('widthMm'),
       heightMm: dimension('heightMm'),
       depthMm: dimension('depthMm'),
-      status: missing.length ? 'error' : 'pending',
+      status: error ? 'error' : 'pending',
       candidates: [],
       qualityWarnings: [...new Set(qualityWarnings)],
-      ...(missing.length ? { error: `Отсутствует: ${missing.join(', ')}.` } : {}),
+      ...(error ? { error } : {}),
     };
   });
   const groups = new Map<string, ProductRow[]>();
@@ -582,7 +584,7 @@ export async function downloadTemplate(): Promise<void> {
     'Обязательны SKU и хотя бы одно наименование (RU или RO). EAN можно оставить пустым.',
     'SKU, внутренний код и EAN вводите как текст. Начальные нули важны; не вводите штрихкод в научной записи.',
     'Все размеры указываются в миллиметрах и должны быть положительными.',
-    'Одна строка — одна товарная позиция. До 500 строк и 10 МБ на файл.',
+    `Одна строка — одна товарная позиция. До ${MAX_IMPORT_ROWS} строк и 10 МБ на файл.`,
     'В этом шаблоне нет реальных товаров или готовых фотографий.',
   ])
     help.addRow([text]);

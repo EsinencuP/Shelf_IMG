@@ -4,6 +4,8 @@ import type { Candidate } from '../types';
 import { publicGet, validatePublicUrl } from './public-fetch';
 import { ApiError } from './http';
 import { normalizeGtin, type SearchProduct } from './validation';
+import { reserveSource } from './database';
+import { sourceFailure } from './source-policy';
 
 export const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -13,6 +15,14 @@ export const str = (value: unknown): string =>
   typeof value === 'string' ? value.slice(0, 500) : '';
 export const candidateId = (url: string) =>
   createHash('sha256').update(url).digest('hex').slice(0, 20);
+/** Canonical Zakaz product routes contain the source's GTIN after '--'. */
+export function zakazProductGtin(url: string): string | undefined {
+  const source = new URL(url);
+  if (!/^(?:metro|bonus|novus|auchan|tavriav)\.zakaz\.(?:md|ua)$/.test(source.hostname))
+    return undefined;
+  const code = source.pathname.match(/\/products\/[^/]+--(\d{8,14})\/?$/)?.[1];
+  return code && normalizeGtin(code) ? code : undefined;
+}
 export function safeUrl(value: unknown, base?: string): string | null {
   if (typeof value !== 'string') return null;
   try {
@@ -42,15 +52,19 @@ export async function paced<T>(host: string, interval: number, job: () => Promis
     if (state.unavailableUntil > Date.now())
       throw new ApiError(
         503,
-        'Источник недавно не ответил; временно пропущен. Повторная проверка доступна через минуту.',
+        `Источник временно пропущен. Повтор доступен через ${Math.ceil((state.unavailableUntil - Date.now()) / 1000)} сек.`,
+        state.unavailableUntil - Date.now(),
       );
     const wait = state.started + interval - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     state.started = Date.now();
+    await reserveSource(host, interval);
     try {
       return await job();
     } catch (error) {
-      if (!(error instanceof ApiError) || [502, 504].includes(error.status))
+      if (error instanceof ApiError && error.retryAfterMs !== undefined)
+        state.unavailableUntil = Date.now() + error.retryAfterMs;
+      else if (!(error instanceof ApiError) || [502, 504].includes(error.status))
         state.unavailableUntil = Date.now() + 60000;
       throw error;
     }
@@ -68,8 +82,9 @@ export async function publicJson(url: string, interval = 700): Promise<unknown> 
     });
     if (response.status === 404) return { status: 0, results: [], items: [] };
     if (response.status !== 200)
-      throw new ApiError(
-        response.status === 429 ? 429 : 502,
+      throw await sourceFailure(
+        url,
+        response,
         response.status === 429
           ? 'Квота источника исчерпана.'
           : `Источник ответил HTTP ${response.status}.`,
@@ -92,7 +107,11 @@ export async function publicHtml(url: string): Promise<string> {
       accept: 'text/html',
     });
     if (response.status !== 200)
-      throw new ApiError(502, `Страница источника недоступна (HTTP ${response.status}).`);
+      throw await sourceFailure(
+        url,
+        response,
+        `Страница источника недоступна (HTTP ${response.status}).`,
+      );
     if (!response.headers['content-type']?.includes('text/html'))
       throw new ApiError(502, 'Источник вернул некорректный формат HTML.');
     return response.body.toString('utf8');
@@ -138,7 +157,14 @@ export function catalogProducts(
           typeof image === 'string' ? image : obj(image).url || obj(image).contentUrl,
           pageUrl,
         );
-        if (!imageUrl || !title) continue;
+        if (
+          !imageUrl ||
+          !title ||
+          /(?:instagram|facebook|twitter|favicon|logo|icon)(?:[._/?-]|$)/i.test(
+            new URL(imageUrl).pathname,
+          )
+        )
+          continue;
         candidates.push({
           id: candidateId(imageUrl),
           title,

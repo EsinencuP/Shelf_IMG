@@ -1,5 +1,21 @@
 import { sourceDiagnostic, sourceFailureDetails } from '../source-status';
+import { load } from 'cheerio/slim';
+import type { Candidate, SearchDiagnostic } from '../types';
+import {
+  candidateId,
+  catalogProducts,
+  obj,
+  str,
+  safeUrl,
+  publicHtml,
+  publicJson,
+} from './catalog-utils';
+import { nativeQueries, canonicalText, titleRelevance } from './search-queries';
+import { normalizeGtin, type SearchProduct } from './validation';
+import { matchCandidate } from './matching';
 import { ApiError } from './http';
+import type { SupplierMarket } from '../search-sources';
+
 class PartialCatalogFailure extends Error {
   constructor(
     public candidates: Candidate[],
@@ -16,21 +32,6 @@ function collectCards(results: PromiseSettledResult<Candidate[]>[]): Candidate[]
   if (failure?.status === 'rejected') throw new PartialCatalogFailure(candidates, failure.reason);
   return candidates;
 }
-
-import { load } from 'cheerio/slim';
-import type { Candidate, SearchDiagnostic } from '../types';
-import {
-  candidateId,
-  catalogProducts,
-  obj,
-  str,
-  safeUrl,
-  publicHtml,
-  publicJson,
-} from './catalog-utils';
-import { nativeQueries, canonicalText, titleRelevance } from './search-queries';
-import { normalizeGtin, type SearchProduct } from './validation';
-import { matchCandidate } from './matching';
 
 export const ZAKAZ_STORES = [
   {
@@ -307,6 +308,7 @@ async function searchBucuria(product: SearchProduct): Promise<Candidate[]> {
 export async function searchRegionalSources(
   product: SearchProduct,
   mode: 'moldova' | 'expanded' = 'expanded',
+  market?: SupplierMarket,
 ): Promise<{ candidates: Candidate[]; diagnostics: SearchDiagnostic[] }> {
   const jobs = [
     ...ZAKAZ_STORES.map((source) => ({
@@ -319,68 +321,72 @@ export async function searchRegionalSources(
   ];
   const diagnostics: SearchDiagnostic[] = [];
   const candidates: Candidate[] = [];
-  // Small waves avoid bursting all requests at the same catalog host.
-  for (let index = 0; index < jobs.length; index += 3) {
-    await Promise.all(
-      jobs.slice(index, index + 3).map(async (job) => {
-        const start = Date.now();
-        try {
-          if (mode === 'moldova' && job.id.endsWith('-ua')) {
-            diagnostics.push(
-              sourceDiagnostic({
-                id: job.id,
-                source: job.name,
-                status: 'skipped',
-                count: 0,
-                elapsedMs: 0,
-                message: 'Отключён в режиме «Молдова». Расширьте поиск для этой позиции.',
-              }),
-            );
-            return;
-          }
-          if (
-            job.id === 'bucuria' &&
-            !/bucuria|букурия/i.test(`${product.brand} ${product.nameRo} ${product.nameRu}`)
-          ) {
-            diagnostics.push(
-              sourceDiagnostic({
-                id: job.id,
-                source: job.name,
-                status: 'skipped',
-                count: 0,
-                elapsedMs: 0,
-              }),
-            );
-            return;
-          }
-          const result = await job.run();
-          candidates.push(...result);
+  // Per-host pacing serializes shared catalogs; independent hosts run in parallel.
+  await Promise.all(
+    jobs.map(async (job) => {
+      const start = Date.now();
+      const sourceMarket: 'UA' | 'MD' = job.id.endsWith('-ua') ? 'UA' : 'MD';
+      try {
+        if ((mode === 'moldova' || market === 'RO') && sourceMarket === 'UA') {
           diagnostics.push(
             sourceDiagnostic({
               id: job.id,
               source: job.name,
-              status: 'ok',
-              count: result.length,
-              elapsedMs: Date.now() - start,
+              status: 'skipped',
+              count: 0,
+              elapsedMs: 0,
+              message: 'Украинский каталог вне выбранного рынка.',
             }),
           );
-        } catch (error) {
-          if (error instanceof PartialCatalogFailure) candidates.push(...error.candidates);
-          diagnostics.push(
-            sourceDiagnostic({
-              id: job.id,
-              source: job.name,
-              count: error instanceof PartialCatalogFailure ? error.candidates.length : 0,
-              elapsedMs: Date.now() - start,
-              message: error instanceof Error ? error.message : 'Источник временно недоступен.',
-              ...sourceFailureDetails(
-                error instanceof PartialCatalogFailure ? error.failure : error,
-              ),
-            }),
-          );
+          return;
         }
-      }),
-    );
-  }
+        if (
+          job.id === 'bucuria' &&
+          !/bucuria|букурия/i.test(`${product.brand} ${product.nameRo} ${product.nameRu}`)
+        ) {
+          diagnostics.push(
+            sourceDiagnostic({
+              id: job.id,
+              source: job.name,
+              status: 'skipped',
+              count: 0,
+              elapsedMs: 0,
+              message: 'Каталог Bucuria не опрашивается для товаров других производителей.',
+            }),
+          );
+          return;
+        }
+        const result = await job.run();
+        candidates.push(...result.map<Candidate>((candidate) => ({ ...candidate, sourceMarket })));
+        diagnostics.push(
+          sourceDiagnostic({
+            id: job.id,
+            source: job.name,
+            status: 'ok',
+            count: result.length,
+            elapsedMs: Date.now() - start,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof PartialCatalogFailure)
+          candidates.push(
+            ...error.candidates.map<Candidate>((candidate) => ({
+              ...candidate,
+              sourceMarket,
+            })),
+          );
+        diagnostics.push(
+          sourceDiagnostic({
+            id: job.id,
+            source: job.name,
+            count: error instanceof PartialCatalogFailure ? error.candidates.length : 0,
+            elapsedMs: Date.now() - start,
+            message: error instanceof Error ? error.message : 'Источник временно недоступен.',
+            ...sourceFailureDetails(error instanceof PartialCatalogFailure ? error.failure : error),
+          }),
+        );
+      }
+    }),
+  );
   return { candidates, diagnostics };
 }

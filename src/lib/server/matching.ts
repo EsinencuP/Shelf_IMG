@@ -33,7 +33,8 @@ export function parseQuantity(value: string): ParsedQuantity | null {
   );
   if (!match) return null;
   if (match[1] && match[4] && match[1] !== match[4]) return null;
-  const count = Number(match[1] || match[4] || 1);
+  const pack = clean.match(/(?:\bpack\s+of\s+|^)(\d+)\s*(?:x\b|$)|\bpack\s+of\s+(\d+)/);
+  const count = Number(match[1] || match[4] || pack?.[1] || pack?.[2] || 1);
   const amount = Number(match[2]);
   if (!count || !amount || !Number.isFinite(count * amount)) return null;
   const unit = match[3];
@@ -52,6 +53,8 @@ export function matchCandidate(
 ): { rejected: boolean; candidate: Candidate } {
   const warnings = [...candidate.warnings];
   let rejected = false;
+  let metadataConflict = false;
+  const reasons: string[] = [];
   const requestedGtin = product.ean ? normalizeGtin(product.ean) : null;
   const foundGtin = candidate.gtin ? normalizeGtin(candidate.gtin) : null;
   if (requestedGtin && foundGtin && requestedGtin !== foundGtin) {
@@ -70,19 +73,59 @@ export function matchCandidate(
     } else warnings.push('Бренд на изображении требует проверки.');
   }
   const expectedQuantity = parseQuantity(product.quantity || `${product.nameRu} ${product.nameRo}`);
-  const actualQuantity = parseQuantity(candidate.quantity || candidate.title);
+  let urlQuantity: ParsedQuantity | null = null;
+  try {
+    urlQuantity = parseQuantity(
+      decodeURIComponent(new URL(candidate.pageUrl).pathname).replace(/-/g, ' '),
+    );
+  } catch {
+    /* Vision observations do not have a source URL. */
+  }
+  const fieldQuantity = parseQuantity(candidate.quantity || '');
+  const titleQuantity = parseQuantity(candidate.title);
+  const sameQuantity = (a: ParsedQuantity, b: ParsedQuantity) =>
+    a.kind === b.kind && a.count === b.count && Math.abs(a.amount - b.amount) <= 0.001;
+  const internalQuantityConflict =
+    !!fieldQuantity && !!titleQuantity && !sameQuantity(fieldQuantity, titleQuantity);
+  const actualQuantity = fieldQuantity || titleQuantity || urlQuantity;
+  if (internalQuantityConflict) {
+    reasons.push(
+      `Источник противоречит себе: фасовка «${candidate.quantity}», название «${candidate.title}».`,
+    );
+    metadataConflict = true;
+  }
   if (expectedQuantity && actualQuantity) {
     if (
       expectedQuantity.kind !== actualQuantity.kind ||
       expectedQuantity.count !== actualQuantity.count ||
       Math.abs(expectedQuantity.amount - actualQuantity.amount) > 0.001
     ) {
-      warnings.push('Объём, масса или количество упаковок отличаются.');
-      rejected = true;
+      if (
+        gtinExact &&
+        internalQuantityConflict &&
+        titleQuantity &&
+        sameQuantity(expectedQuantity, titleQuantity)
+      ) {
+        reasons.push(
+          'EAN совпадает, а название согласуется с вашей фасовкой. Проверьте единицы на этикетке; автоматическое подтверждение запрещено.',
+        );
+      } else {
+        warnings.push('Объём, масса или количество упаковок отличаются.');
+        rejected = true;
+      }
     }
   } else if (expectedQuantity) warnings.push('Объём и количество упаковок не подтверждены.');
   const expectedText = `${product.nameRu} ${product.nameRo}`,
     actualText = candidate.title;
+  const light = /\b(?:zero|diet|light|fara zahar|bez sahara)\b/;
+  if (
+    /\boriginal\b/.test(canonicalText(expectedText)) &&
+    !light.test(canonicalText(expectedText)) &&
+    light.test(canonicalText(actualText))
+  ) {
+    warnings.push('Вариант без сахара отличается от запрошенного Original.');
+    rejected = true;
+  }
   const expectedPercent = percentages(expectedText),
     actualPercent = percentages(actualText);
   if (
@@ -106,5 +149,24 @@ export function matchCandidate(
   warnings.push(
     'Проверьте вкус, вариант и актуальность дизайна упаковки; источник не гарантирует текущую версию.',
   );
-  return { rejected, candidate: { ...candidate, gtinExact, warnings: [...new Set(warnings)] } };
+  const foreignMarket = !!candidate.sourceMarket && candidate.sourceMarket !== 'MD';
+  if (foreignMarket)
+    warnings.push('Фото с рынка поставщика. Проверьте фронт упаковки для поставки в Молдову.');
+  const matchStatus = rejected
+    ? 'rejected'
+    : metadataConflict
+      ? 'metadata_conflict'
+      : gtinExact && !foreignMarket
+        ? 'exact'
+        : 'probable';
+  return {
+    rejected,
+    candidate: {
+      ...candidate,
+      gtinExact,
+      matchStatus,
+      matchReasons: reasons,
+      warnings: [...new Set([...warnings, ...reasons])],
+    },
+  };
 }

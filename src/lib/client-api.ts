@@ -1,10 +1,26 @@
 'use client';
+import type { Candidate } from './types';
 
 let authorization = '';
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
 export function setAccessPassword(password: string) {
   authorization = password
     ? `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`admin:${password}`)))}`
     : '';
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('shelf-access-changed'));
+}
+export function candidateImageEndpoint(item: Pick<Candidate, 'imageUrl' | 'pageUrl'>): string {
+  return item.imageUrl.startsWith('/api/library/')
+    ? item.imageUrl
+    : `/api/image?${new URLSearchParams({ url: item.imageUrl, ...(item.pageUrl ? { page: item.pageUrl } : {}) })}`;
 }
 export async function apiFetch(url: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
@@ -19,7 +35,7 @@ export async function apiFetch(url: string, init: RequestInit = {}) {
       /* Non-JSON gateway responses. */
     }
     if (response.status === 401) message = 'Для доступа укажите пароль в настройках приложения.';
-    throw new Error(message);
+    throw new ApiRequestError(message, response.status);
   }
   return response;
 }

@@ -73,7 +73,7 @@ describe('Excel and CSV import', () => {
     expect(eanIssue('4.00638E+12')).toContain('только цифры');
     expect(() =>
       createRows({ name: 'test', headers: ['SKU'], rows: [['A']], warnings: [] }, { sku: 0 }),
-    ).toThrow('наименование');
+    ).toThrow('GTIN или наименования');
   });
 
   it('permits disabling suggested optional columns in the mapping dialog', () => {
@@ -98,11 +98,33 @@ describe('Excel and CSV import', () => {
       ),
     ).rejects.toThrow('50 колонок');
     await expect(
-      parseFile(new File(['SKU,Name\n' + 'A,Product\n'.repeat(501)], 'bad.csv')),
-    ).rejects.toThrow('500');
+      parseFile(new File(['SKU,Name\n' + 'A,Product\n'.repeat(1001)], 'bad.csv')),
+    ).rejects.toThrow('1000');
     await expect(parseFile(new File(['SKU,Name\nA,"broken'], 'bad.csv'))).rejects.toThrow(
       'кавычка',
     );
+  });
+
+  it('handles 1,000 EAN-only rows and keeps an invalid EAN on a row requiring correction', async () => {
+    const sheet = await parseFile(
+      new File(
+        [
+          'SKU,GTIN\n' +
+            Array.from({ length: 999 }, (_, index) => `SKU-${index},00012345600012\n`).join('') +
+            'INVALID,00012345600013\n',
+        ],
+        'gtins.csv',
+      ),
+    );
+    const rows = createRows(sheet, suggestMapping(sheet.headers));
+    expect(rows).toHaveLength(1000);
+    expect(rows[0]).toMatchObject({ ean: '00012345600012', status: 'pending', nameRu: '' });
+    expect(rows[999]).toMatchObject({
+      ean: '00012345600013',
+      sourceRow: 1001,
+      status: 'error',
+      error: expect.stringContaining('контрольная'),
+    });
   });
 
   it('rejects ZIP expansion bombs before ExcelJS reads the workbook', async () => {

@@ -97,7 +97,18 @@ export async function searchSupplementalCatalogs(
   const fields =
     'code,product_name,product_name_ru,product_name_ro,brands,quantity,images,selected_images,image_front_url,creator';
   const jobs = [
-    ...OPEN_CATALOGS.map((catalog) => ({
+    ...OPEN_CATALOGS.filter((catalog) => {
+      const name = `${product.nameRu} ${product.nameRo}`.toLowerCase();
+      if (/шампун|космет|крем|sampon|cosmetic/.test(name)) return catalog.id === 'beauty-facts';
+      if (/корм|pet food|hrana.*animale/.test(name)) return catalog.id === 'petfood-facts';
+      if (
+        /майонез|maionez|молок|lapte|творог|branza|сок|suc|напит|cola|шоколад|ciocolat|нутел|nutella/.test(
+          name,
+        )
+      )
+        return false;
+      return true;
+    }).map((catalog) => ({
       id: catalog.id,
       name: catalog.name,
       run: async () =>

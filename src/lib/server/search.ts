@@ -1,6 +1,4 @@
 import { sourceDiagnostic, sourceFailureDetails, isSourceFailure } from '../source-status';
-import { REGIONAL_SOURCES, OPEN_CATALOGS } from '../search-sources';
-import { WEB_PROVIDER_IDS, WEB_PROVIDER_NAMES } from './web-discovery';
 import { createHash } from 'node:crypto';
 import {
   DEFAULT_SEARCH_OPTIONS,
@@ -16,7 +14,19 @@ import { matchCandidate } from './matching';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { searchRegionalSources } from './regional-search';
 import { searchSupplementalCatalogs } from './supplemental-search';
-import { configuredWebProviders, searchWebDiscovery } from './web-discovery';
+import {
+  configuredWebProviders,
+  searchWebDiscovery,
+  WEB_PROVIDER_IDS,
+  WEB_PROVIDER_NAMES,
+} from './web-discovery';
+import { cachedSearch } from './search-cache';
+import { resolveBarcodeIdentity } from './barcode-identity';
+import { searchSostavista } from './sostavista-search';
+import { findApproved } from './library';
+import { reserveSource } from './database';
+import { REGIONAL_SOURCES, OPEN_CATALOGS } from '../search-sources';
+import { checkSourcePhoto } from './source-photo';
 
 const idFor = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
 const record = (value: unknown): Record<string, unknown> =>
@@ -80,6 +90,7 @@ async function pacedOff<T>(job: () => Promise<T>): Promise<T> {
     const wait = Math.max(0, offStarted + 4_100 - Date.now());
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     offStarted = Date.now();
+    await reserveSource('world.openfoodfacts.org', 4100);
     return await job();
   } finally {
     release();
@@ -183,6 +194,8 @@ async function fromOff(product: SearchProduct): Promise<Candidate[]> {
       true,
     ),
   );
+  if (data.status !== 0 && !Object.keys(record(data.product)).length)
+    throw new ApiError(502, 'Источник вернул некорректную выдачу Open Food Facts.');
   return offCandidates(data, product);
 }
 
@@ -260,7 +273,7 @@ export async function searchProducts(
   refresh = false,
 ): Promise<SearchResponse> {
   const started = performance.now();
-  const response = await searchProductsInternal(product, options);
+  const response = await searchProductsInternal(product, options, refresh);
   const diagnostics = (response.diagnostics ?? []).map(sourceDiagnostic);
   const knownSources = [
     { id: 'food-facts', name: 'Open Food Facts', eanOnly: true },
@@ -294,155 +307,280 @@ export async function searchProducts(
     ...response,
     diagnostics,
     elapsedMs: Math.max(0, Math.round(performance.now() - started)),
-    outcome:
-      response.outcome ??
-      (response.candidates.length
-        ? 'review'
-        : diagnostics.some((item) => isSourceFailure(item.status))
-          ? 'deferred'
-          : 'not_found'),
   };
 }
 
 async function searchProductsInternal(
   product: SearchProduct,
   options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
+  refresh = false,
 ): Promise<SearchResponse> {
-  const warnings: string[] = [];
-  const candidates: Candidate[] = [];
+  try {
+    const approved = !refresh && options.useCache !== false ? await findApproved(product) : [];
+    if (approved.length)
+      return {
+        candidates: approved,
+        warnings: [],
+        outcome: 'found',
+        diagnostics: [
+          {
+            id: 'library',
+            source: 'Общий каталог',
+            status: 'ok',
+            count: approved.length,
+            elapsedMs: 0,
+            message: 'Использована ранее подтверждённая фотография; интернет-квота сохранена.',
+          },
+        ],
+      };
+  } catch {
+    /* Shared catalogue outages must not prevent fallback internet discovery. */
+  }
+  return cachedSearch(product, options, refresh, () =>
+    runSearchProducts(product, options, refresh),
+  );
+}
+
+async function runSearchProducts(
+  suppliedProduct: SearchProduct,
+  options: SearchOptions,
+  refresh: boolean,
+): Promise<SearchResponse> {
   const diagnostics: SearchDiagnostic[] = [];
-  let successfulSources = 0;
-  const offTask = async () => {
-    const offStartedAt = Date.now();
+  const candidates: Candidate[] = [];
+  const warnings: string[] = [];
+  let product = suppliedProduct;
+  const checkedPhotos = new Map<string, string | null>();
+  const exact = (candidate: Candidate) =>
+    matchCandidate(suppliedProduct, candidate).candidate.matchStatus === 'exact';
+  async function checkExactPhoto(items = candidates) {
+    for (const candidate of items) {
+      if (!exact(candidate)) continue;
+      if (checkedPhotos.get(candidate.imageUrl)) return true;
+      if (checkedPhotos.has(candidate.imageUrl) || checkedPhotos.size >= 3) continue;
+      const started = Date.now();
+      try {
+        checkedPhotos.set(candidate.imageUrl, await checkSourcePhoto(candidate));
+        return true;
+      } catch (error) {
+        checkedPhotos.set(candidate.imageUrl, null);
+        diagnostics.push(
+          sourceDiagnostic({
+            id: 'image-' + candidate.id,
+            source: `Фото · ${candidate.source}`,
+            count: 0,
+            elapsedMs: Date.now() - started,
+            ...sourceFailureDetails(error),
+          }),
+        );
+      }
+    }
+    return false;
+  }
+  const run = async (id: string, source: string, job: () => Promise<Candidate[]>) => {
+    const start = Date.now();
     try {
-      const found = await fromOff(product);
+      const found = await job();
       candidates.push(...found);
       diagnostics.push(
         sourceDiagnostic({
-          id: 'food-facts',
-          source: 'Open Food Facts',
-          status: product.ean ? 'ok' : 'skipped',
+          id,
+          source,
+          status: 'ok',
           count: found.length,
-          elapsedMs: Date.now() - offStartedAt,
+          elapsedMs: Date.now() - start,
         }),
       );
-      if (product.ean) successfulSources++;
     } catch (error) {
       diagnostics.push(
         sourceDiagnostic({
-          id: 'food-facts',
-          source: 'Open Food Facts',
+          id,
+          source,
           count: 0,
-          elapsedMs: Date.now() - offStartedAt,
+          elapsedMs: Date.now() - start,
+          message: error instanceof Error ? error.message : 'Источник временно недоступен.',
           ...sourceFailureDetails(error),
         }),
       );
-      warnings.push(
-        error instanceof ApiError
-          ? `Open Food Facts: ${error.message}`
-          : 'Open Food Facts временно недоступен.',
-      );
     }
   };
-  const additional = await Promise.all([
-    searchRegionalSources(product, options.mode),
-    options.mode === 'expanded'
-      ? searchSupplementalCatalogs(product)
-      : Promise.resolve({ candidates: [], diagnostics: [] }),
-    offTask().then(() => ({ candidates: [], diagnostics: [] })),
-  ]);
-  for (const result of additional) {
+  // Inexpensive EAN lookups precede shops and web credits.
+  let usableExact = false;
+  if (product.ean) {
+    await run('sostavista', 'Состависта · база EAN', () => searchSostavista(product));
+    usableExact = await checkExactPhoto();
+    if (refresh || !usableExact) {
+      await run('food-facts', 'Open Food Facts', () => fromOff(product));
+      usableExact = await checkExactPhoto();
+    }
+  }
+  if (refresh || !usableExact) {
+    if (
+      product.ean &&
+      ![product.nameRu, product.nameRo].some((name) => name && !/^Товар с EAN /i.test(name))
+    ) {
+      const start = Date.now();
+      try {
+        product = await resolveBarcodeIdentity(product);
+        diagnostics.push(
+          sourceDiagnostic({
+            id: 'barcode-identity',
+            source: 'Название по штрихкоду',
+            status: product.nameRu ? 'ok' : 'empty',
+            count: 0,
+            elapsedMs: Date.now() - start,
+            message: product.nameRu
+              ? 'Название найдено; фотография проверяется отдельно.'
+              : 'Название не найдено.',
+          }),
+        );
+      } catch (error) {
+        diagnostics.push(
+          sourceDiagnostic({
+            id: 'barcode-identity',
+            source: 'Название по штрихкоду',
+            count: 0,
+            elapsedMs: Date.now() - start,
+            message: 'Справочник названий временно недоступен.',
+            ...sourceFailureDetails(error),
+          }),
+        );
+      }
+    }
+    if (options.mode === 'expanded') {
+      const result = await searchSupplementalCatalogs(product);
+      candidates.push(...result.candidates);
+      diagnostics.push(...result.diagnostics);
+      usableExact = await checkExactPhoto();
+    }
+  }
+  if (refresh || !usableExact) {
+    const result = await searchRegionalSources(product, options.mode, options.market);
     candidates.push(...result.candidates);
     diagnostics.push(...result.diagnostics);
-    successfulSources += result.diagnostics.filter((item) => item.status === 'ok').length;
+    usableExact = await checkExactPhoto();
   }
-  const webEnabled = options.mode === 'expanded' && options.useWeb;
-  if (options.mode === 'moldova')
-    diagnostics.push(
-      ...[
-        ...OPEN_CATALOGS.map((source) => ({ id: source.id, source: source.name })),
-        { id: 'upcitemdb', source: 'UPCitemdb' },
-      ].map((source): SearchDiagnostic => ({
-        ...source,
-        status: 'disabled',
-        count: 0,
-        elapsedMs: 0,
-        message: 'Отключён в режиме «Молдова».',
-      })),
+  const regionalUnavailable = diagnostics.some(
+    (item) =>
+      ['metro-md', 'bonus-md', 'linella', 'bucuria'].includes(item.id) &&
+      isSourceFailure(item.status),
+  );
+  const webEnabled = options.useWeb && (options.mode === 'expanded' || regionalUnavailable);
+  const needsWeb = (refresh || !usableExact) && webEnabled;
+  const webUnavailable = needsWeb && !configuredWebProviders().length;
+  if (needsWeb && !webUnavailable) {
+    const result = await searchWebDiscovery(
+      product,
+      options.webQueryLimit,
+      options.mode,
+      options.market,
+      checkExactPhoto,
     );
-  const providers = configuredWebProviders();
-  const exactFound = candidates.some((candidate) => {
-    const matched = matchCandidate(product, candidate);
-    return !matched.rejected && matched.candidate.gtinExact;
-  });
-  if (!webEnabled || !providers.length || exactFound) {
-    for (const provider of ['searxng', 'tavily'])
+    candidates.push(...result.candidates);
+    diagnostics.push(...result.diagnostics);
+    usableExact = await checkExactPhoto();
+    // Low-level fetch failures belong to diagnostics, not the product's warning banner.
+    if (result.warnings.length)
       diagnostics.push(
         sourceDiagnostic({
-          id: provider,
-          source: provider === 'searxng' ? 'SearXNG' : 'Tavily Free',
-          status: webEnabled && !exactFound ? 'not_configured' : 'skipped',
+          id: 'web-pages',
+          source: 'Карточки веб-поиска',
+          ...sourceFailureDetails({ message: result.warnings.join(' '), trustedDiagnostic: true }),
           count: 0,
           elapsedMs: 0,
-          message: exactFound
-            ? 'Прямой каталог уже дал точный EAN без конфликтов; веб-квота сохранена.'
-            : webEnabled
-              ? 'Нужна настройка сервиса на сервере.'
-              : options.mode === 'moldova'
-                ? 'Отключён в режиме «Молдова».'
-                : 'Веб-поиск выключен в настройках.',
+          message: result.warnings.join(' '),
         }),
       );
-    if (webEnabled && !providers.length && !exactFound)
-      warnings.push(
-        'Общий веб-поиск не подключён: доступны прямые каталоги и базы EAN. Подключите SearXNG или Tavily Free.',
-      );
   } else {
-    const result = await searchWebDiscovery(product, options.webQueryLimit);
-    candidates.push(...result.candidates);
-    diagnostics.push(...result.diagnostics);
-    warnings.push(...result.warnings);
-    successfulSources += result.diagnostics.filter((item) => item.status === 'ok').length;
+    for (const id of WEB_PROVIDER_IDS)
+      diagnostics.push(
+        sourceDiagnostic({
+          id,
+          source: WEB_PROVIDER_NAMES[id],
+          status: webUnavailable ? 'not_configured' : 'skipped',
+          count: 0,
+          elapsedMs: 0,
+          message:
+            usableExact && !webUnavailable
+              ? 'Найден точный EAN; резервная квота сохранена.'
+              : !webEnabled
+                ? options.useWeb
+                  ? 'Местные каталоги ответили; резервный поиск не потребовался.'
+                  : 'Веб-поиск выключен в настройках.'
+                : 'Нужен API-ключ.',
+        }),
+      );
   }
-  if (process.env.BRAVE_SEARCH_API_KEY)
-    diagnostics.push(
-      sourceDiagnostic({
-        id: 'brave',
-        source: 'Brave Search',
-        status: 'disabled',
-        count: 0,
-        elapsedMs: 0,
-        message: 'Отключён политикой бесплатного поиска; ключ не используется.',
-      }),
-    );
-  for (const source of diagnostics.filter((item) => isSourceFailure(item.status)))
-    warnings.push(
-      `${source.source}: ${(source.message || 'источник временно недоступен').replace(/[.!]+$/, '')}.`,
-    );
-
   const byImage = new Map<string, Candidate>();
   for (const candidate of candidates) {
-    const result = matchCandidate(product, candidate);
+    const result = matchCandidate(suppliedProduct, candidate);
     if (result.rejected) {
-      warnings.push(
-        `Отклонён «${candidate.title}»: ${result.candidate.warnings.filter((warning) => /отличается|отличаются/.test(warning)).join(' ')}`,
+      diagnostics.push(
+        sourceDiagnostic({
+          id: 'rejected-' + candidate.id,
+          source: candidate.source,
+          status: 'skipped',
+          count: 0,
+          elapsedMs: 0,
+          message:
+            'Отклонён «' +
+            candidate.title +
+            '»: ' +
+            result.candidate.warnings
+              .filter((reason) => /отличается|отличаются/.test(reason))
+              .join(' '),
+        }),
       );
       continue;
     }
+    const hash = checkedPhotos.get(candidate.imageUrl);
+    if (hash === null) continue;
+    if (hash) result.candidate.sourceImageHash = hash;
     const previous = byImage.get(candidate.imageUrl);
-    if (!previous || (!previous.gtinExact && result.candidate.gtinExact))
+    if (!previous || (result.candidate.matchStatus === 'exact' && previous.matchStatus !== 'exact'))
       byImage.set(candidate.imageUrl, result.candidate);
   }
+  const found = [...byImage.values()]
+    .sort(
+      (a, b) =>
+        Number(!!b.sourceImageHash) - Number(!!a.sourceImageHash) ||
+        Number(b.matchStatus === 'exact') - Number(a.matchStatus === 'exact') ||
+        Number(b.gtinExact) - Number(a.gtinExact),
+    )
+    .slice(0, 24);
+  const retryable = diagnostics.some(
+    (item) =>
+      isSourceFailure(item.status) &&
+      item.status !== 'parse_error' &&
+      ![401, 403, 404, 406, 451].includes(item.httpStatus ?? 0),
+  );
+  const incomplete = diagnostics.some((item) => isSourceFailure(item.status)) || webUnavailable;
+  const outcome = found.length
+    ? found.some((item) => item.sourceImageHash && item.matchStatus === 'exact')
+      ? 'found'
+      : 'review'
+    : incomplete
+      ? 'deferred'
+      : 'not_found';
+  if (outcome === 'deferred')
+    warnings.push(
+      webUnavailable && !diagnostics.some((item) => isSourceFailure(item.status))
+        ? 'Поиск неполный: веб-поиск не настроен. Добавьте свою фотографию или измените режим поиска.'
+        : 'Поиск неполный: часть источников недоступна. Повторите позже или добавьте свою фотографию.',
+    );
+  if (
+    !found.some((item) => item.matchStatus === 'exact') &&
+    found.some((item) => item.matchStatus === 'metadata_conflict')
+  )
+    warnings.push(
+      'EAN найден, но сведения о фасовке противоречивы. Проверьте этикетку перед подтверждением.',
+    );
   return {
-    candidates: [...byImage.values()]
-      .sort(
-        (a, b) =>
-          Number(b.gtinExact) - Number(a.gtinExact) ||
-          Number(!/Moldova|Linella|Bucuria/i.test(a.source)) -
-            Number(!/Moldova|Linella|Bucuria/i.test(b.source)),
-      )
-      .slice(0, 24),
-    warnings: [...new Set(warnings)],
+    candidates: found,
     diagnostics,
+    warnings,
+    outcome,
+    coverage: incomplete ? 'partial' : 'complete',
+    retryable,
   };
 }

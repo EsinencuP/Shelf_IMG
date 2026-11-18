@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -21,6 +22,9 @@ export function errorResponse(error: unknown): Response {
       status,
       headers: {
         'Cache-Control': 'no-store',
+        ...(error instanceof ApiError && error.retryAfterMs !== undefined
+          ? { 'Retry-After': String(Math.ceil(error.retryAfterMs / 1000)) }
+          : {}),
         ...(status === 401 ? { 'WWW-Authenticate': 'Basic realm="Shelf", charset="UTF-8"' } : {}),
       },
     },
@@ -110,11 +114,11 @@ export async function readBody(
   return Buffer.concat(chunks);
 }
 
-export async function readJson(request: Request): Promise<unknown> {
+export async function readJson(request: Request, maxBytes = 16_384): Promise<unknown> {
   if (!request.headers.get('content-type')?.includes('application/json'))
     throw new ApiError(415, 'Ожидается application/json.');
   try {
-    return JSON.parse(Buffer.from(await readBody(request, 16_384)).toString('utf8'));
+    return JSON.parse(Buffer.from(await readBody(request, maxBytes)).toString('utf8'));
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(400, 'Некорректный JSON.');

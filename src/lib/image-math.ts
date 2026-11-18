@@ -162,6 +162,45 @@ export function lostProductDetail(
   return detail >= mask.length * 0.005 && retained / detail < 0.6;
 }
 
+/** Retain neutral packaging extremities when neural segmentation clips a white catalogue photo. */
+export function preserveWhitePackage(
+  rgba: Uint8ClampedArray,
+  aiMask: Uint8Array,
+  width: number,
+  height: number,
+): Uint8Array | null {
+  if (rgba.length !== width * height * 4 || aiMask.length !== width * height)
+    throw new Error('Некорректные пиксели.');
+  let border = 0,
+    white = 0;
+  const inspect = (index: number) => {
+    const p = index * 4,
+      min = Math.min(rgba[p], rgba[p + 1], rgba[p + 2]);
+    border++;
+    if (min >= 238 && Math.max(rgba[p], rgba[p + 1], rgba[p + 2]) - min <= 18) white++;
+  };
+  for (let x = 0; x < width; x++) {
+    inspect(x);
+    inspect((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y++) {
+    inspect(y * width);
+    inspect(y * width + width - 1);
+  }
+  if (!border || white / border < 0.9) return null;
+  const reference = whiteBackgroundMask(rgba, width, height);
+  const expected = maskBounds(reference, width, height),
+    actual = maskBounds(aiMask, width, height);
+  if (!expected || !actual) return null;
+  // Missing neutral caps and edges may contain no dark ink, so RGB loss alone misses them.
+  const clipped =
+    actual.x - expected.x > expected.width * 0.06 ||
+    actual.y - expected.y > expected.height * 0.06 ||
+    expected.x + expected.width - actual.x - actual.width > expected.width * 0.06 ||
+    expected.y + expected.height - actual.y - actual.height > expected.height * 0.06;
+  return clipped || lostProductDetail(rgba, aiMask, width, height) ? reference : null;
+}
+
 /** Flood only near-white background connected to an image border; enclosed white stays. */
 export function whiteBackgroundMask(
   rgba: Uint8ClampedArray,

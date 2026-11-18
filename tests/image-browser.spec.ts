@@ -116,17 +116,19 @@ test('real local U2NetP prepares a cropped white JPEG and preserves packaging de
         page.evaluate(
           () =>
             new Promise<string>((resolve, reject) => {
-              const request = indexedDB.open('shelf-product-images', 1);
+              const request = indexedDB.open('shelf-product-images');
               request.onerror = () => reject(request.error);
               request.onsuccess = () => {
                 const database = request.result;
-                const transaction = database.transaction('batches', 'readonly');
-                const rows = transaction.objectStore('batches').getAll();
+                const transaction = database.transaction(['batches', 'rows'], 'readonly');
+                const batches = transaction.objectStore('batches').getAll();
+                const rows = transaction.objectStore('rows').getAll();
                 rows.onsuccess = () => {
-                  const batch = rows.result.find(
+                  const batch = batches.result.find(
                     (value: { name: string }) => value.name === 'onnx-browser-test',
                   );
-                  resolve(batch?.rows?.[0]?.processingMethod ?? '');
+                  const record = rows.result.find((value) => value.batchId === batch?.id);
+                  resolve(record?.row.processingMethod ?? '');
                 };
                 rows.onerror = () => reject(rows.error);
                 transaction.oncomplete = () => database.close();

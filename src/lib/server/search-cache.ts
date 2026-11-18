@@ -29,9 +29,10 @@ export function searchCacheKey(product: SearchProduct, options: SearchOptions): 
   return createHash('sha256')
     .update(
       JSON.stringify({
-        version: 9,
+        version: 10,
         product: normalized,
         mode: options.mode,
+        market: options.market,
         useWeb: options.useWeb,
         webQueryLimit: options.webQueryLimit,
         sources: [
@@ -101,13 +102,14 @@ export async function cachedSearch(
     const response = await job();
     // An empty result during upstream errors is not reliable absence evidence.
     const cacheable =
-      response.candidates.length > 0 ||
-      (!!response.diagnostics?.some((item) => item.status === 'ok' || item.status === 'empty') &&
-        !response.diagnostics.some(
-          (item) =>
-            isSourceFailure(item.status) ||
-            /недоступ|ошиб|исчерпан|не получил|некоррект/i.test(item.message ?? ''),
-        ));
+      response.coverage !== 'partial' &&
+      (response.candidates.length > 0 ||
+        (!!response.diagnostics?.some((item) => item.status === 'ok' || item.status === 'empty') &&
+          !response.diagnostics.some(
+            (item) =>
+              isSourceFailure(item.status) ||
+              /недоступ|ошиб|исчерпан|не получил|некоррект/i.test(item.message ?? ''),
+          )));
     if (cacheable && generations.get(key) === generation) {
       const storedAt = Date.now(),
         ttlSeconds = ttl(response.candidates.length > 0);

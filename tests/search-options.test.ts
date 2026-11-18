@@ -115,12 +115,12 @@ describe('search modes and API budgets', () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.diagnostics?.find((source) => source.id === 'metro-ua')?.status).toBe('empty');
   });
-  it('a legacy Brave key never activates paid search', async () => {
+  it('useWeb false prevents Brave requests regardless of a configured key', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-key');
     vi.stubEnv('SEARCH_MAX_WEB_QUERIES', '6');
     const fetcher = vi.fn(async () => Response.json({ results: [], web: { results: [] } }));
     vi.stubGlobal('fetch', fetcher);
-    await searchProducts(product, { ...DEFAULT_SEARCH_OPTIONS, webQueryLimit: 1 });
+    await searchProducts(product, { ...DEFAULT_SEARCH_OPTIONS, webQueryLimit: 1, useWeb: false });
     expect(fetcher).not.toHaveBeenCalled();
   });
 });

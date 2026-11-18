@@ -3,14 +3,14 @@
 import { useState } from 'react';
 import { ArrowRight, AlertCircle } from 'lucide-react';
 import type { ColumnMapping, ImportField, ParsedSheet, ProductRow } from '@/lib/types';
-import { createRows, suggestMapping } from '@/lib/import';
+import { createRows, hasProductMapping, suggestMapping } from '@/lib/import';
 import Modal from './modal';
 
 const FIELDS: { field: ImportField; label: string; note?: string }[] = [
   { field: 'sku', label: 'SKU / артикул', note: 'Обязательно' },
   { field: 'internalCode', label: 'Внутренний код' },
   { field: 'ean', label: 'EAN / штрихкод' },
-  { field: 'nameRu', label: 'Наименование RU', note: 'Нужно RU или RO' },
+  { field: 'nameRu', label: 'Наименование RU' },
   { field: 'nameRo', label: 'Наименование RO' },
   { field: 'brand', label: 'Бренд' },
   { field: 'quantity', label: 'Объём / масса' },
@@ -50,7 +50,7 @@ export default function ImportDialog({
     <Modal title="Проверьте колонки Excel" onClose={onClose} wide>
       <p className="muted">
         {filename} · лист «{sheet.name}» · {sheet.rows.length} строк. Габариты должны быть указаны в
-        миллиметрах.
+        миллиметрах. Для поиска нужны SKU и GTIN или наименование RU/RO.
       </p>
       <label className="field-label" htmlFor="batch-name">
         Название партии
@@ -130,11 +130,7 @@ export default function ImportDialog({
         </button>
         <button
           className="button primary"
-          disabled={
-            importing ||
-            mapping.sku === undefined ||
-            (mapping.nameRu === undefined && mapping.nameRo === undefined)
-          }
+          disabled={importing || !hasProductMapping(mapping)}
           onClick={submit}
         >
           {importing ? 'Сохраняем…' : `Импортировать ${sheet.rows.length} SKU`}

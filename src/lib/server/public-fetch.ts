@@ -1,6 +1,7 @@
 import { request as httpsRequest } from 'node:https';
+import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { ApiError, readBody } from './http';
-import { outboundFetch } from './outbound-fetch';
+import { outboundFetch, isRelayConfigured } from './outbound-fetch';
 import { resolvePublicUrl, validatePublicUrl, type Address, type Resolver } from './public-url';
 export {
   isPublicAddress,
@@ -27,19 +28,44 @@ export interface GetOptions {
   body?: string;
   headers?: Record<string, string>;
   followRedirects?: boolean;
+  cloudFallback?: boolean;
   referer?: string;
   signal?: AbortSignal;
   /** Exact hostnames, checked before DNS on every redirect hop. */
   allowedHosts?: ReadonlySet<string>;
   relay?: boolean;
-  /** Disable secondary egress when this process is itself a relay. */
-  cloudFallback?: boolean;
 }
 export type Transport = (
   url: URL,
   address: Address,
   options: GetOptions,
 ) => Promise<PublicResponse>;
+
+/** Limit both the wire payload and the expanded payload. */
+export function decodeResponseBody(body: Buffer, encoding: string, maxBytes: number): Buffer {
+  try {
+    const options = { maxOutputLength: maxBytes };
+    switch (encoding.trim().toLowerCase()) {
+      case '':
+      case 'identity':
+        if (body.length > maxBytes) throw new ApiError(413, 'Ответ превышает допустимый размер.');
+        return body;
+      case 'gzip':
+        return gunzipSync(body, options);
+      case 'br':
+        return brotliDecompressSync(body, options);
+      case 'deflate':
+        return inflateSync(body, options);
+      default:
+        throw new ApiError(415, 'Неизвестное сжатие сетевого ответа.');
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE')
+      throw new ApiError(413, 'Распакованный ответ превышает допустимый размер.');
+    throw new ApiError(502, 'Источник вернул повреждённый сжатый ответ.');
+  }
+}
 
 const transport: Transport = (url, address, options) =>
   new Promise((resolve, reject) => {
@@ -75,12 +101,6 @@ const transport: Transport = (url, address, options) =>
           fail(new ApiError(413, 'Файл превышает допустимый размер.'));
           return;
         }
-        if (headers['content-encoding'] && headers['content-encoding'] !== 'identity') {
-          res.destroy();
-          req.destroy();
-          fail(new ApiError(415, 'Сжатый сетевой ответ не поддерживается.'));
-          return;
-        }
         const chunks: Buffer[] = [];
         let total = 0;
         res.on('data', (chunk: Buffer) => {
@@ -97,11 +117,24 @@ const transport: Transport = (url, address, options) =>
         res.on('aborted', () => fail(new ApiError(502, 'Источник прервал загрузку.')));
         res.on('end', () => {
           if (!settled) {
+            let body: Buffer;
+            try {
+              body = decodeResponseBody(
+                Buffer.concat(chunks),
+                headers['content-encoding'] || '',
+                maxBytes,
+              );
+            } catch (error) {
+              fail(error as Error);
+              return;
+            }
+            delete headers['content-encoding'];
+            headers['content-length'] = String(body.length);
             settled = true;
             resolve({
               status: res.statusCode || 502,
               headers,
-              body: Buffer.concat(chunks),
+              body,
               url: url.href,
             });
           }
@@ -112,10 +145,53 @@ const transport: Transport = (url, address, options) =>
     req.end(options.body);
   });
 
+/** A second cloud egress; credentials and request headers are never forwarded to the source. */
+export async function cloudGet(
+  value: string,
+  options: GetOptions,
+): Promise<PublicResponse | undefined> {
+  if (
+    process.env.VERCEL !== '1' ||
+    !process.env.SHELF_WORKER_URL ||
+    !process.env.SHELF_WORKER_SECRET
+  )
+    return undefined;
+  const worker = validatePublicUrl(process.env.SHELF_WORKER_URL);
+  if (!worker.hostname.endsWith('.neon.tech') || worker.search || worker.hash) return undefined;
+  const maxBytes = options.maxBytes ?? MAX_IMAGE_BYTES;
+  const response = await outboundFetch(new URL('fetch', worker), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-secret': process.env.SHELF_WORKER_SECRET },
+    body: JSON.stringify({
+      url: value,
+      maxBytes,
+      timeoutMs: options.timeoutMs ?? 12000,
+      accept: options.accept,
+      referer: options.referer,
+    }),
+    redirect: 'manual',
+    cache: 'no-store',
+    relay: false,
+    timeoutMs: (options.timeoutMs ?? 12000) + 10000,
+    signal: options.signal,
+  });
+  if (!response.ok) return undefined;
+  const status = Number(response.headers.get('x-shelf-upstream-status'));
+  const url = response.headers.get('x-shelf-upstream-url');
+  if (!Number.isInteger(status) || status < 200 || status > 599 || !url) return undefined;
+  validatePublicUrl(url);
+  return {
+    status,
+    url,
+    headers: { 'content-type': response.headers.get('content-type') || 'application/octet-stream' },
+    body: Buffer.from(await readBody(response, maxBytes)),
+  };
+}
+
 export async function publicGet(
   value: string,
   options: GetOptions = {},
-  dependencies: { resolver?: Resolver; transport?: Transport } = {},
+  dependencies: { resolver?: Resolver; transport?: Transport; cloud?: typeof cloudGet } = {},
 ): Promise<PublicResponse> {
   let current = value;
   for (let hop = 0; hop <= 3; hop++) {
@@ -126,38 +202,66 @@ export async function publicGet(
     )
       throw new ApiError(403, 'Домен источника не разрешён.');
     const { url, address } = await resolvePublicUrl(current, dependencies.resolver, options.signal);
-    const result = await outboundFetch(
-      url,
-      {
-        timeoutMs: options.timeoutMs,
-        userAgent: options.userAgent,
-        referer: options.referer ? validatePublicUrl(options.referer).href : undefined,
-        signal: options.signal,
-        relay: options.cloudFallback === false ? false : options.relay,
-        maxBytes: options.maxBytes,
-        method: options.method,
-        body: options.body,
-        headers: {
-          Accept: options.accept || 'image/jpeg,image/png,image/webp',
-          'Accept-Encoding': 'identity',
-          ...options.headers,
+    // Validate DNS before either egress. Do not replay auth, POSTs, quotas or invalid input.
+    const canRelay =
+      !isRelayConfigured() &&
+      options.cloudFallback !== false &&
+      (!options.method || options.method === 'GET') &&
+      !options.body &&
+      !Object.keys(options.headers || {}).length &&
+      options.followRedirects !== false;
+    let result: PublicResponse;
+    try {
+      result = await outboundFetch(
+        url,
+        {
+          timeoutMs: options.timeoutMs,
+          userAgent: options.userAgent,
+          referer: options.referer ? validatePublicUrl(options.referer).href : undefined,
+          signal: options.signal,
+          relay: options.cloudFallback === false ? false : options.relay,
+          maxBytes: options.maxBytes,
+          method: options.method,
+          body: options.body,
+          headers: {
+            Accept: options.accept || 'image/jpeg,image/png,image/webp',
+            'Accept-Encoding': 'identity',
+            ...options.headers,
+          },
         },
-      },
-      (_url, init) =>
-        (dependencies.transport || transport)(url, address, {
-          ...options,
-          headers: init.headers,
-          signal: init.signal,
+        (_url, init) =>
+          (dependencies.transport || transport)(url, address, {
+            ...options,
+            headers: init.headers,
+            signal: init.signal,
+          }),
+        async (response) => ({
+          status: response.status,
+          headers: Object.fromEntries(response.headers),
+          body: response.body
+            ? Buffer.from(await readBody(response, options.maxBytes ?? MAX_IMAGE_BYTES))
+            : Buffer.alloc(0),
+          url: validatePublicUrl(response.headers.get('x-shelf-upstream-url') || url.href).href,
         }),
-      async (response) => ({
-        status: response.status,
-        headers: Object.fromEntries(response.headers),
-        body: response.body
-          ? Buffer.from(await readBody(response, options.maxBytes ?? MAX_IMAGE_BYTES))
-          : Buffer.alloc(0),
-        url: validatePublicUrl(response.headers.get('x-shelf-upstream-url') || url.href).href,
-      }),
-    );
+      );
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (canRelay && (!(error instanceof ApiError) || [502, 504].includes(error.status))) {
+        const fallback = await (dependencies.cloud || cloudGet)(url.href, options).catch(
+          () => undefined,
+        );
+        options.signal?.throwIfAborted();
+        if (fallback?.status === 200) return fallback;
+      }
+      throw error;
+    }
+    if (canRelay && [403, 406, 500, 502, 503, 504].includes(result.status)) {
+      const fallback = await (dependencies.cloud || cloudGet)(url.href, options).catch(
+        () => undefined,
+      );
+      options.signal?.throwIfAborted();
+      if (fallback?.status === 200) return fallback;
+    }
     if ([301, 302, 303, 307, 308].includes(result.status)) {
       if (
         options.followRedirects === false ||

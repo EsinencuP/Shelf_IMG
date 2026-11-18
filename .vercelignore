@@ -1,0 +1,18 @@
+# CLI deployments do not use .gitignore; keep secrets and debugging artifacts out.
+.env*
+!.env.example
+.runtime/
+.local-archive/
+.vercel/
+.git/
+.next/
+node_modules/
+coverage/
+test-results/
+test-results-image/
+playwright-report/
+tests/
+infra/
+worker/
+*.tsbuildinfo
+public/onnx/

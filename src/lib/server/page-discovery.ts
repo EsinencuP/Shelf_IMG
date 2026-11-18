@@ -1,18 +1,63 @@
-import { sourceFailureDetails } from '../source-status';
 import type { Candidate } from '../types';
-import { catalogProducts, obj, str } from './catalog-utils';
-import { publicGet, resolvePublicUrl } from './public-fetch';
-import { serviceEndpoint, serviceJson } from './discovery-services';
+import { catalogProducts } from './catalog-utils';
+import { publicGet } from './public-fetch';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { matchCandidate } from './matching';
+import { load } from 'cheerio/slim';
+import { candidateId, safeUrl } from './catalog-utils';
+import { titleRelevance } from './search-queries';
+import { zakazPageEvidence } from './zakaz-page';
+import { paced } from './catalog-utils';
+import { sourceFailure } from './source-policy';
+import { sourceFailureDetails } from '../source-status';
 
 function pageEvidence(html: string, url: string, product: SearchProduct) {
+  const hydrated = zakazPageEvidence(html, url, product);
+  if (hydrated.conflict || hydrated.candidates.length) return hydrated;
   // Preserve contradictions as well as matches; a search snippet must not conceal a wrong GTIN.
   const expected = product.ean ? normalizeGtin(product.ean) : null;
-  const candidates = catalogProducts(html, url, { ...product, ean: '' }, true).map((candidate) => ({
-    ...candidate,
-    gtinExact: !!expected && !!candidate.gtin && normalizeGtin(candidate.gtin) === expected,
-  }));
+  const candidates = catalogProducts(html, url, { ...product, ean: '' }, true).map((candidate) => {
+    const gtinExact = !!expected && !!candidate.gtin && normalizeGtin(candidate.gtin) === expected;
+    return {
+      ...candidate,
+      gtinExact,
+      warnings: candidate.warnings.map((warning) =>
+        gtinExact && warning === 'В карточке нет подтверждённого EAN: проверьте вариант упаковки.'
+          ? 'GTIN связан с фотографией в карточке источника.'
+          : warning,
+      ),
+    };
+  });
+  const conflict =
+    candidates.length > 0 &&
+    candidates.every((candidate) => matchCandidate(product, candidate).rejected);
+  if (!candidates.length && !conflict) {
+    const $ = load(html);
+    const title =
+      $('h1').first().text().trim() ||
+      $('meta[property="og:title"]').attr('content') ||
+      $('title').text().trim();
+    const gtinValue = $('[itemprop="gtin13"],[itemprop="gtin"],[itemprop="gtin14"]').first();
+    const gtin = gtinValue.attr('content') || gtinValue.text().trim();
+    const imageUrl = safeUrl(
+      $('meta[property="og:image"]').attr('content') || $('[itemprop="image"]').first().attr('src'),
+      url,
+    );
+    const gtinExact = !!expected && normalizeGtin(gtin) === expected;
+    if (imageUrl && title && (gtinExact || titleRelevance(product, title) >= 0.35)) {
+      candidates.push({
+        id: candidateId(imageUrl),
+        title,
+        imageUrl,
+        pageUrl: url,
+        source: new URL(url).hostname,
+        rights: 'unknown',
+        gtin: normalizeGtin(gtin) ? gtin : undefined,
+        gtinExact,
+        warnings: ['Фото из метаданных карточки; проверьте упаковку и права использования.'],
+      });
+    }
+  }
   return {
     candidates,
     conflict:
@@ -21,36 +66,33 @@ function pageEvidence(html: string, url: string, product: SearchProduct) {
   };
 }
 
-export function crawlerConfigured(): boolean {
-  return (
-    !!process.env.CRAWL4AI_URL &&
-    !!process.env.CRAWL4AI_API_TOKEN &&
-    !!process.env.CRAWL4AI_ALLOWED_HOSTS
-  );
-}
-
-export function crawlerAllows(url: string): boolean {
-  const host = new URL(url).hostname.toLowerCase();
-  return (process.env.CRAWL4AI_ALLOWED_HOSTS || '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(host);
-}
-
-/** One rendered page per SKU. No crawling, LLM extraction, JS snippets or anti-bot bypass. */
 export async function discoverPage(
   url: string,
   product: SearchProduct,
-  budget: { rendered: number },
 ): Promise<{
   candidates: Candidate[];
   rendered: boolean;
   conflict?: boolean;
   failure?: ReturnType<typeof sourceFailureDetails>;
 }> {
-  const page = await publicGet(url, { maxBytes: 750_000, timeoutMs: 8_000, accept: 'text/html' });
+  if (/\/(?:categories|category|tags|search|reviews)\//i.test(new URL(url).pathname))
+    return { candidates: [], rendered: false };
+  let failure: ReturnType<typeof sourceFailureDetails> | undefined;
+  const page = await paced(new URL(url).hostname, 700, async () => {
+    const response = await publicGet(url, {
+      maxBytes: 750_000,
+      timeoutMs: 8_000,
+      accept: 'text/html',
+    });
+    if ([403, 406, 429, 503].includes(response.status))
+      throw await sourceFailure(url, response, `Карточка ответила HTTP ${response.status}.`);
+    return response;
+  }).catch((error) => {
+    failure = sourceFailureDetails(error);
+    return undefined;
+  });
   // Do not turn an upstream ban or robots denial into a browser retry.
+  if (!page) return { candidates: [], rendered: false, failure };
   if (page.status === 404) return { candidates: [], rendered: false };
   if (page.status !== 200)
     return {
@@ -72,43 +114,11 @@ export async function discoverPage(
       },
     };
   const evidence = pageEvidence(page.body.toString('utf8'), page.url, product);
-  const { candidates } = evidence;
-  if (candidates.length || budget.rendered >= 1 || !crawlerConfigured() || !crawlerAllows(page.url))
-    return { ...evidence, rendered: false };
-  await resolvePublicUrl(page.url);
-  budget.rendered++;
-  const data = await serviceJson(
-    serviceEndpoint(process.env.CRAWL4AI_URL!, 'crawl'),
-    process.env.CRAWL4AI_API_TOKEN,
-    {
-      urls: [page.url],
-      browser_config: {
-        type: 'BrowserConfig',
-        params: { headless: true, ignore_https_errors: false },
-      },
-      crawler_config: {
-        type: 'CrawlerRunConfig',
-        params: {
-          cache_mode: 'bypass',
-          page_timeout: 12_000,
-          check_robots_txt: true,
-          stream: false,
-          screenshot: false,
-          pdf: false,
-        },
-      },
-    },
-    20_000,
-    2_000_000,
-  );
-  const result = obj(Array.isArray(data.results) ? data.results[0] : undefined);
-  // Refuse unrelated, redirected or failed output; Markdown is not product evidence.
-  if (
-    result.success !== true ||
-    str(result.url) !== page.url ||
-    (result.redirected_url && result.redirected_url !== page.url) ||
-    typeof result.html !== 'string'
-  )
-    return { candidates: [], rendered: true };
-  return { ...pageEvidence(result.html, page.url, product), rendered: true };
+  return {
+    ...evidence,
+    candidates: evidence.candidates.filter(
+      (candidate) => candidate.gtinExact || titleRelevance(product, candidate.title) >= 0.5,
+    ),
+    rendered: false,
+  };
 }

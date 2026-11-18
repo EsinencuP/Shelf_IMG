@@ -10,6 +10,7 @@ import {
   u2netInput,
   whiteBackgroundMask,
   lostProductDetail,
+  preserveWhitePackage,
 } from './image-math';
 
 const MODEL_SHA256 = '309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8';
@@ -36,15 +37,19 @@ async function getSession() {
       ort.env.wasm.wasmPaths = '/onnx/';
       const response = await fetch('/models/u2netp.onnx', { signal: AbortSignal.timeout(30_000) });
       if (!response.ok)
-        throw new Error('Локальная модель отсутствует: выполните npm run setup:model.');
+        throw new Error(
+          'Модель обработки недоступна. Повторите позже или выберите обработку белого фона.',
+        );
       const model = await response.arrayBuffer();
       if (model.byteLength !== 4_574_861)
-        throw new Error('Файл локальной модели повреждён. Выполните npm run setup:model.');
+        throw new Error(
+          'Файл модели повреждён. Повторите загрузку или выберите обработку белого фона.',
+        );
       const digest = await crypto.subtle.digest('SHA-256', model);
       const hash = Array.from(new Uint8Array(digest), (value) =>
         value.toString(16).padStart(2, '0'),
       ).join('');
-      if (hash !== MODEL_SHA256) throw new Error('Контрольная сумма локальной модели не совпала.');
+      if (hash !== MODEL_SHA256) throw new Error('Контрольная сумма модели не совпала.');
       return ort.InferenceSession.create(model, {
         executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
@@ -64,7 +69,7 @@ async function aiMask(
   warnings: string[],
   progress: (message: string) => void,
 ) {
-  progress('Загрузка локальной модели U²-Net…');
+  progress('Загрузка модели U²-Net…');
   try {
     const [modelCanvas, modelContext] = canvas(320, 320);
     modelContext.fillStyle = '#ffffff';
@@ -99,7 +104,7 @@ async function aiMask(
         'Маска содержала несколько объектов: оставлена основная область. Проверьте крышку, ручку и полный комплект товара.',
       );
     warnings.push(
-      'Проверьте контур, крышку и дно. Локальная модель может ошибаться на белой или прозрачной упаковке и сохранять тень.',
+      'Проверьте контур, крышку и дно. Модель может ошибаться на белой или прозрачной упаковке и сохранять тень.',
     );
     return resizeMask(cleaned.mask, 320, 320, width, height);
   } catch (error) {
@@ -167,11 +172,18 @@ export async function processImage(
       );
     } else {
       mask = await aiMask(source, width, height, warnings, progress);
-      if (lostProductDetail(rgba, mask, width, height))
+      const preserved = preserveWhitePackage(rgba, mask, width, height);
+      if (preserved) {
+        mask = preserved;
+        method = 'white-preserved';
+        warnings.push(
+          'Маска нейросети отсекала светлые части упаковки. Применена обрезка белого фона с сохранением крышки, краёв и исходного рисунка. Проверьте полный контур.',
+        );
+      } else if (lostProductDetail(rgba, mask, width, height))
         throw new Error(
           'Нейросеть удалила значительную часть рисунка или упаковки на белом фоне. Результат отклонён. Выберите обрезку светлого фона для этой фотографии или другой исходник.',
         );
-      method = 'u2netp';
+      else method = 'u2netp';
     }
     const bounds = maskBounds(mask, width, height);
     if (!bounds)

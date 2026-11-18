@@ -2,6 +2,7 @@ import { ApiError, readBody } from './http';
 import { obj } from './catalog-utils';
 import { publicGet, validatePublicUrl } from './public-fetch';
 import { outboundFetch } from './outbound-fetch';
+import { sourceFailure } from './source-policy';
 
 /** Backend addresses are deployment settings, never client input. */
 export function serviceEndpoint(base: string, path: string): URL {
@@ -27,12 +28,18 @@ export async function serviceJson(
   body?: unknown,
   timeoutMs = 12_000,
   maxBytes = 1_500_000,
+  authHeader: 'Bearer' | 'X-Subscription-Token' = 'Bearer',
 ): Promise<Record<string, unknown>> {
-  const headers = {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  const headers: Record<string, string> = {
+    ...(token
+      ? authHeader === 'X-Subscription-Token'
+        ? { 'X-Subscription-Token': token }
+        : { Authorization: `Bearer ${token}` }
+      : {}),
     ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
   };
   let status: number, data: Uint8Array;
+  let responseHeaders: Record<string, string> = {};
   if (
     url.protocol === 'http:' &&
     process.env.NODE_ENV !== 'production' &&
@@ -47,6 +54,7 @@ export async function serviceJson(
       timeoutMs,
     });
     status = response.status;
+    responseHeaders = Object.fromEntries(response.headers);
     data = await readBody(response, maxBytes);
   } else {
     const response = await publicGet(url.href, {
@@ -59,12 +67,15 @@ export async function serviceJson(
       followRedirects: false,
     });
     status = response.status;
+    responseHeaders = response.headers;
     data = response.body;
   }
+  if ([432, 433].includes(status)) throw new ApiError(429, 'Лимит бесплатного поиска исчерпан.');
   if (status !== 200)
-    throw new ApiError(
-      [429, 432, 433].includes(status) ? 429 : 502,
-      [429, 432, 433].includes(status)
+    throw await sourceFailure(
+      url.href,
+      { status, headers: responseHeaders },
+      status === 429
         ? 'Лимит бесплатного поиска исчерпан.'
         : `Сервис поиска ответил HTTP ${status}.`,
     );

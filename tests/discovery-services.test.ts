@@ -7,6 +7,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('service transport boundaries', () => {
+  it('never forwards X-Subscription-Token across redirects', async () => {
+    const transport = vi.fn(async (url: URL) => ({
+      status: 302,
+      headers: { location: 'https://other.org/' },
+      body: Buffer.from(''),
+      url: url.href,
+    }));
+    await expect(
+      publicGet(
+        'https://search.org/search',
+        { headers: { 'X-Subscription-Token': 'secret' } },
+        { resolver: async () => [{ address: '93.184.216.34', family: 4 }], transport },
+      ),
+    ).rejects.toThrow('Перенаправление');
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
   it('refuses redirects for authenticated API requests before leaking the token', async () => {
     const transport = vi.fn(async (url: URL) => ({
       status: 302,
