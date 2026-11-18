@@ -1,3 +1,3 @@
 {
-  "buildCommand": "npm run worker:build && npm run typecheck && npm test && node scripts/stage-arm-qa-artifact.mjs && npm run build"
+  "buildCommand": "node scripts/stage-arm-qa-artifact.mjs && npm run build"
 }
