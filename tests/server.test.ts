@@ -20,7 +20,13 @@ import { GET as sessionGet } from '../src/app/api/session/route';
 import { POST as searchPost } from '../src/app/api/search/route';
 vi.mock('../src/lib/server/source-photo', async (original) => ({
   ...(await original<object>()),
-  checkSourcePhoto: vi.fn(async () => 'verified'),
+  checkSourcePhoto: vi.fn(async () => ({
+    sha256: 'verified',
+    mime: 'image/jpeg',
+    width: 512,
+    height: 512,
+    checkedAt: '2026-11-18T12:00:00.000Z',
+  })),
 }));
 vi.mock('../src/lib/server/regional-search', () => ({
   searchRegionalSources: vi.fn(async () => ({ candidates: [], diagnostics: [] })),

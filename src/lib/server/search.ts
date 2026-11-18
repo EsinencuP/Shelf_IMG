@@ -6,6 +6,7 @@ import {
   type SearchDiagnostic,
   type SearchResponse,
   type SearchOptions,
+  type SourcePhotoCheck,
 } from '../types';
 import { ApiError, readBody } from './http';
 import { USER_AGENT, validatePublicUrl } from './public-fetch';
@@ -379,7 +380,7 @@ async function runSearchProducts(
   const candidates: Candidate[] = [];
   const warnings: string[] = [];
   let product = suppliedProduct;
-  const checkedPhotos = new Map<string, string | null>();
+  const checkedPhotos = new Map<string, SourcePhotoCheck | null>();
   const exact = (candidate: Candidate) =>
     matchCandidate(suppliedProduct, candidate).candidate.matchStatus === 'exact';
   async function checkExactPhoto(items = candidates) {
@@ -400,7 +401,9 @@ async function runSearchProducts(
             source: `Фото · ${candidate.source}`,
             count: 0,
             elapsedMs: Date.now() - started,
-            ...sourceFailureDetails(error),
+            ...(error instanceof ApiError && [413, 415, 422].includes(error.status)
+              ? { status: 'parse_error', reason: error.message }
+              : sourceFailureDetails(error)),
           }),
         );
       }
@@ -576,9 +579,12 @@ async function runSearchProducts(
       );
       continue;
     }
-    const hash = checkedPhotos.get(candidate.imageUrl);
-    if (hash === null) continue;
-    if (hash) result.candidate.sourceImageHash = hash;
+    const photo = checkedPhotos.get(candidate.imageUrl);
+    if (photo === null) continue;
+    if (photo) {
+      result.candidate.sourceImageHash = photo.sha256;
+      result.candidate.sourcePhotoCheck = photo;
+    }
     const previous = byImage.get(candidate.imageUrl);
     if (!previous || (result.candidate.matchStatus === 'exact' && previous.matchStatus !== 'exact'))
       byImage.set(candidate.imageUrl, result.candidate);

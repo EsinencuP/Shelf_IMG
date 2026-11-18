@@ -4,6 +4,15 @@ export type RowStatus =
   'pending' | 'searching' | 'review' | 'processing' | 'ready' | 'not_found' | 'deferred' | 'error';
 export type RightsStatus = 'open_license' | 'unknown' | 'user_owned';
 
+export interface SourcePhotoCheck {
+  /** Digest of downloaded bytes. Dimensions and MIME describe the decoded raster. */
+  sha256: string;
+  mime: string;
+  width: number;
+  height: number;
+  checkedAt: string;
+}
+
 export interface Candidate {
   id: string;
   title: string;
@@ -22,6 +31,7 @@ export interface Candidate {
   matchReasons?: string[];
   sourceMarket?: 'MD' | SupplierMarket;
   sourceImageHash?: string;
+  sourcePhotoCheck?: SourcePhotoCheck;
 }
 
 export interface ProductRow {

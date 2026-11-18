@@ -1,8 +1,26 @@
 import sharp from 'sharp';
 import { ApiError } from './http';
 import { MAX_IMAGE_BYTES } from './public-fetch';
-import { detectImageType } from './source-photo';
-export { detectImageType } from './source-photo';
+
+export function detectImageType(
+  bytes: Uint8Array,
+): 'image/jpeg' | 'image/png' | 'image/webp' | null {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
+    return 'image/jpeg';
+  if (
+    buffer.length >= 8 &&
+    buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  )
+    return 'image/png';
+  if (
+    buffer.length >= 12 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP'
+  )
+    return 'image/webp';
+  return null;
+}
 
 export async function inspectImage(
   bytes: Uint8Array,
@@ -11,7 +29,7 @@ export async function inspectImage(
   if (!mime)
     throw new ApiError(415, 'Поддерживаются JPEG, PNG и WebP. SVG и прочие форматы запрещены.');
   try {
-    const image = sharp(Buffer.from(bytes), {
+    const image = sharp(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes), {
       limitInputPixels: 20_000_000,
       animated: false,
       failOn: 'warning',
@@ -53,14 +71,13 @@ function extraRasterType(bytes: Buffer): boolean {
 /** Lossless normalization for static catalogue formats the browser pipeline cannot read. */
 export async function normalizeSourceImage(
   bytes: Uint8Array,
-): Promise<{ body: Buffer; mime: string; converted: boolean }> {
-  const buffer = Buffer.from(bytes);
+): Promise<{ body: Buffer; mime: string; converted: boolean; width: number; height: number }> {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   if (!buffer.length || buffer.length > MAX_IMAGE_BYTES)
     throw new ApiError(413, 'Фото должно занимать не больше 4 МБ.');
   const supported = detectImageType(buffer);
   if (supported) {
-    await inspectImage(buffer);
-    return { body: buffer, mime: supported, converted: false };
+    return { body: buffer, ...(await inspectImage(buffer)), converted: false };
   }
   if (!extraRasterType(buffer))
     throw new ApiError(
@@ -83,8 +100,7 @@ export async function normalizeSourceImage(
         413,
         'После преобразования фото превышает 4 МБ. Выберите более компактный исходник.',
       );
-    await inspectImage(body);
-    return { body, mime: 'image/png', converted: true };
+    return { body, ...(await inspectImage(body)), converted: true };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(

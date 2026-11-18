@@ -47,7 +47,13 @@ beforeEach(() => {
   mocks.regional.mockResolvedValue({ candidates: [], diagnostics: [] });
   mocks.providers.mockReturnValue([]);
   mocks.supplemental.mockResolvedValue({ candidates: [], diagnostics: [] });
-  mocks.checkPhoto.mockResolvedValue('verified');
+  mocks.checkPhoto.mockResolvedValue({
+    sha256: 'verified',
+    mime: 'image/jpeg',
+    width: 512,
+    height: 512,
+    checkedAt: '2026-11-18T12:00:00.000Z',
+  });
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response('', { status: 404 })),

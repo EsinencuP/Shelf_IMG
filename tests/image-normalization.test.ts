@@ -1,6 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { normalizeSourceImage } from '../src/lib/server/image';
+import { checkSourcePhoto } from '../src/lib/server/source-photo';
+import * as publicFetch from '../src/lib/server/public-fetch';
 import { POST } from '../src/app/api/image/route';
 const input = () =>
   sharp({
@@ -11,7 +14,10 @@ const input = () =>
       background: { r: 20, g: 70, b: 100, alpha: 0.5 },
     },
   });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 it.each(['avif', 'gif', 'tiff'] as const)(
   'normalizes static %s without resizing or removing transparency',
   async (format) => {
@@ -38,6 +44,31 @@ it('rejects JPEGs with readable headers and truncated pixels', async () => {
   const truncated = jpeg.subarray(0, jpeg.length - 20);
   expect((await sharp(truncated).metadata()).width).toBe(60);
   await expect(normalizeSourceImage(truncated)).rejects.toMatchObject({ status: 422 });
+});
+it('requires decodable candidate bytes and records evidence from the source file', async () => {
+  const candidate = {
+    id: 'fixture',
+    title: 'Test pack',
+    source: 'Fixture',
+    gtinExact: true,
+    imageUrl: 'https://shop.md/photo.jpg',
+    pageUrl: 'https://shop.md/product',
+    rights: 'unknown' as const,
+    warnings: [],
+  };
+  const bytes = await input().flatten().jpeg().toBuffer();
+  const response = { url: candidate.imageUrl, status: 200, headers: {} };
+  vi.spyOn(publicFetch, 'publicGet')
+    .mockResolvedValueOnce({ ...response, body: bytes.subarray(0, bytes.length - 20) })
+    .mockResolvedValueOnce({ ...response, body: bytes });
+  await expect(checkSourcePhoto(candidate)).rejects.toMatchObject({ status: 422 });
+  await expect(checkSourcePhoto(candidate)).resolves.toEqual({
+    width: 60,
+    height: 90,
+    mime: 'image/jpeg',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    checkedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+  });
 });
 it('rejects disguised SVG, truncated formats, oversized files and excessive pixels', async () => {
   await expect(normalizeSourceImage(Buffer.from('<svg/>'))).rejects.toMatchObject({ status: 415 });
