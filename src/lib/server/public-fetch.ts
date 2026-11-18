@@ -3,6 +3,7 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { ApiError, readBody } from './http';
 import { outboundFetch, isRelayConfigured } from './outbound-fetch';
 import { resolvePublicUrl, validatePublicUrl, type Address, type Resolver } from './public-url';
+import { currentSearchSignal } from './search-signal';
 export {
   isPublicAddress,
   resolvePublicUrl,
@@ -193,8 +194,11 @@ export async function publicGet(
   options: GetOptions = {},
   dependencies: { resolver?: Resolver; transport?: Transport; cloud?: typeof cloudGet } = {},
 ): Promise<PublicResponse> {
+  const signal = currentSearchSignal(options.signal);
+  if (signal) options = { ...options, signal };
   let current = value;
   for (let hop = 0; hop <= 3; hop++) {
+    signal?.throwIfAborted();
     const target = validatePublicUrl(current);
     if (
       options.allowedHosts &&

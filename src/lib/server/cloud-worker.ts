@@ -1,28 +1,49 @@
 import { randomUUID } from 'node:crypto';
 import { database } from './database';
 import { claimJob, finishJob, renewJob } from './jobs';
+import type { ClaimedJob } from './jobs';
 import { searchProducts } from './search';
 import { boundedWork } from './http';
+
+export async function runClaimedSearch(
+  job: ClaimedJob,
+  retryMessage: string,
+  workerSignal?: AbortSignal,
+) {
+  const lease = new AbortController();
+  const signal = workerSignal ? AbortSignal.any([workerSignal, lease.signal]) : lease.signal;
+  let renewing = false;
+  const heartbeat = setInterval(async () => {
+    if (renewing) return;
+    renewing = true;
+    try {
+      if (!(await renewJob(job))) lease.abort();
+    } catch {
+      // A temporary database error is not proof that the lease was lost.
+    } finally {
+      renewing = false;
+    }
+  }, 15_000);
+  try {
+    signal.throwIfAborted();
+    const result = await searchProducts(job.product, job.options, job.refresh, signal);
+    if (!signal.aborted) await finishJob(job, result);
+  } catch {
+    if (!signal.aborted) await finishJob(job, undefined, retryMessage);
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
 
 /** Short Vercel fallback. The same durable job lease prevents double execution. */
 export async function runQueuedJob(id: string): Promise<void> {
   await boundedWork(async () => {
     const job = await claimJob(id);
     if (!job) return;
-    const heartbeat = setInterval(() => {
-      void renewJob(job).catch(() => {});
-    }, 30000);
-    try {
-      await finishJob(job, await searchProducts(job.product, job.options, job.refresh));
-    } catch {
-      await finishJob(
-        job,
-        undefined,
-        'Облачный поиск временно недоступен; задание сохранено для повтора.',
-      );
-    } finally {
-      clearInterval(heartbeat);
-    }
+    await runClaimedSearch(
+      job,
+      'Облачный поиск временно недоступен; задание сохранено для повтора.',
+    );
   }).catch(() => {
     /* Busy or interrupted: the persisted job remains recoverable. */
   });
@@ -51,7 +72,7 @@ export async function pendingDelay(): Promise<number | undefined> {
 // durable rows and leases survive eviction. No database polling while idle.
 export async function drainCloudQueue(token: string): Promise<boolean> {
   const deadline = Date.now() + 8 * 60_000;
-  let lostLease = false;
+  const lease = new AbortController();
   const heartbeat = setInterval(() => {
     void database()
       .query(
@@ -59,14 +80,14 @@ export async function drainCloudQueue(token: string): Promise<boolean> {
         [token],
       )
       .then((result) => {
-        if (!result.rowCount) lostLease = true;
+        if (!result.rowCount) lease.abort();
       })
       .catch(() => {
-        lostLease = true;
+        lease.abort();
       });
   }, 30_000);
   try {
-    while (!lostLease && Date.now() < deadline) {
+    while (!lease.signal.aborted && Date.now() < deadline) {
       const job = await claimJob();
       if (!job) {
         const delay = await pendingDelay();
@@ -76,20 +97,11 @@ export async function drainCloudQueue(token: string): Promise<boolean> {
         await new Promise((resolve) => setTimeout(resolve, Math.max(1000, delay * 1000)));
         continue;
       }
-      const jobHeartbeat = setInterval(() => {
-        void renewJob(job).catch(() => {});
-      }, 30_000);
-      try {
-        await finishJob(job, await searchProducts(job.product, job.options, job.refresh));
-      } catch {
-        await finishJob(
-          job,
-          undefined,
-          'Поиск временно недоступен. Автоматический повтор ограничен тремя попытками.',
-        );
-      } finally {
-        clearInterval(jobHeartbeat);
-      }
+      await runClaimedSearch(
+        job,
+        'Поиск временно недоступен. Автоматический повтор ограничен тремя попытками.',
+        lease.signal,
+      );
       console.log('Shelf cloud job completed:', job.id);
     }
   } catch {
@@ -101,5 +113,5 @@ export async function drainCloudQueue(token: string): Promise<boolean> {
       [token],
     );
   }
-  return !lostLease && (await pendingDelay()) !== undefined;
+  return !lease.signal.aborted && (await pendingDelay()) !== undefined;
 }

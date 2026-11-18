@@ -1,5 +1,6 @@
 import { ApiError, readBody } from './http';
 import { validatePublicUrl } from './public-url';
+import { currentSearchSignal } from './search-signal';
 
 export const USER_AGENT = 'ShelfProductImages/0.1 (+https://shelf-img.vercel.app)';
 export const OUTBOUND_TIMEOUT_MS = 12_000;
@@ -48,6 +49,9 @@ export async function outboundFetch(
   transport?: OutboundTransport<unknown>,
   fromRelay?: (response: Response) => Promise<unknown>,
 ): Promise<unknown> {
+  const signal = currentSearchSignal(options.signal);
+  signal?.throwIfAborted();
+  if (signal) options = { ...options, signal };
   let result: unknown;
   try {
     result = await send(url, options, transport);

@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.stubEnv('SHELF_WORKER_SECRET', 'test-secret');
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -117,6 +118,23 @@ describe('cloud execution boundaries', () => {
     await runQueuedJob('a');
     expect(mocks.claimJob).toHaveBeenCalledWith('a');
     expect(mocks.finishJob).toHaveBeenCalledWith(job, { candidates: [], outcome: 'not_found' });
+  });
+  it('cancels active source work when the job lease has been revoked', async () => {
+    vi.useFakeTimers();
+    const job = { id: 'a', product: {}, options: {}, refresh: false };
+    mocks.claimJob.mockResolvedValue(job);
+    mocks.renewJob.mockResolvedValue(false);
+    mocks.searchProducts.mockImplementation(
+      (_product, _options, _refresh, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    );
+    const attempt = runQueuedJob('a');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await attempt;
+    expect(mocks.renewJob).toHaveBeenCalledWith(job);
+    expect(mocks.finishJob).not.toHaveBeenCalled();
   });
   it('persists search failure for a durable retry and releases the lock', async () => {
     const job = { id: 'job', product: {}, options: {}, refresh: false };

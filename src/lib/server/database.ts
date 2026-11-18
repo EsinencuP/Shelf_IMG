@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { attachDatabasePool } from '@vercel/functions';
 import { ApiError } from './http';
+import { abortable, currentSearchSignal, waitForSource } from './search-signal';
 
 let pool: Pool | undefined;
 export const databaseConfigured = () => !!process.env.DATABASE_URL;
@@ -27,16 +28,21 @@ export function database(): Pool {
 
 // Reserve one shared request slot atomically across workers and serverless instances.
 export async function reserveSource(host: string, intervalMs: number): Promise<void> {
+  const signal = currentSearchSignal();
+  signal?.throwIfAborted();
   if (!databaseConfigured()) return;
-  const { rows } = await database().query<{ wait: number; cooldown: number }>(
-    `
+  const { rows } = await abortable(
+    database().query<{ wait: number; cooldown: number }>(
+      `
     INSERT INTO shelf_source_slots(host,next_at) VALUES($1,now()+$2*interval '1 millisecond')
     ON CONFLICT(host) DO UPDATE SET next_at=CASE
       WHEN shelf_source_slots.cooldown_until>now() THEN shelf_source_slots.next_at
       ELSE greatest(shelf_source_slots.next_at,now())+$2*interval '1 millisecond' END
     RETURNING greatest(0,extract(epoch from (next_at-now()))*1000-$2)::float8 AS wait,
       greatest(0,extract(epoch from (cooldown_until-now()))*1000)::float8 AS cooldown`,
-    [host, intervalMs],
+      [host, intervalMs],
+    ),
+    signal,
   );
   if (rows[0].cooldown > 0)
     throw new ApiError(
@@ -46,7 +52,7 @@ export async function reserveSource(host: string, intervalMs: number): Promise<v
     );
   if (rows[0].wait > 60000)
     throw new ApiError(429, 'Источник занят общей очередью; запрос будет повторён позже.');
-  if (rows[0].wait > 0) await new Promise((resolve) => setTimeout(resolve, rows[0].wait));
+  await waitForSource(rows[0].wait, signal);
 }
 
 /** Shared between cold Vercel instances and the Neon executor. */

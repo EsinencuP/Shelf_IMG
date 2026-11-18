@@ -126,11 +126,12 @@ export async function claimJob(onlyId?: string): Promise<ClaimedJob | undefined>
   );
   return rows[0];
 }
-export async function renewJob(job: ClaimedJob): Promise<void> {
-  await database().query(
-    "UPDATE shelf_jobs SET lease_until=now()+interval '2 minutes' WHERE id=$1 AND lease_token=$2 AND status='running'",
+export async function renewJob(job: ClaimedJob): Promise<boolean> {
+  const result = await database().query(
+    "UPDATE shelf_jobs SET lease_until=now()+interval '2 minutes' WHERE id=$1 AND lease_token=$2 AND status='running' AND lease_until>now()",
     [job.id, job.lease_token],
   );
+  return result.rowCount === 1;
 }
 export async function finishJob(
   job: ClaimedJob,
@@ -149,7 +150,7 @@ export async function finishJob(
   await database().query(
     `UPDATE shelf_jobs SET status=$3,result=$4,error=$5,lease_token=NULL,lease_until=NULL,
     available_at=now()+$6*interval '1 second',updated_at=now()
-    WHERE id=$1 AND lease_token=$2 AND status='running'`,
+    WHERE id=$1 AND lease_token=$2 AND status='running' AND lease_until>now()`,
     [job.id, job.lease_token, status, result ?? null, error ?? null, delay],
   );
 }

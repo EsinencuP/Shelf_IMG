@@ -6,6 +6,7 @@ import { ApiError } from './http';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { reserveSource } from './database';
 import { sourceFailure } from './source-policy';
+import { abortable, currentSearchSignal, waitForSource } from './search-signal';
 
 export const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -37,6 +38,8 @@ const hostTails = new Map<
   { tail: Promise<void>; started: number; unavailableUntil: number }
 >();
 export async function paced<T>(host: string, interval: number, job: () => Promise<T>): Promise<T> {
+  const signal = currentSearchSignal();
+  signal?.throwIfAborted();
   let state = hostTails.get(host);
   if (!state) {
     state = { tail: Promise.resolve(), started: 0, unavailableUntil: 0 };
@@ -47,21 +50,21 @@ export async function paced<T>(host: string, interval: number, job: () => Promis
   state.tail = new Promise((resolve) => {
     release = resolve;
   });
-  await previous;
   try {
+    await abortable(previous, signal);
     if (state.unavailableUntil > Date.now())
       throw new ApiError(
         503,
         `Источник временно пропущен. Повтор доступен через ${Math.ceil((state.unavailableUntil - Date.now()) / 1000)} сек.`,
         state.unavailableUntil - Date.now(),
       );
-    const wait = state.started + interval - Date.now();
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    await waitForSource(state.started + interval - Date.now(), signal);
     state.started = Date.now();
     await reserveSource(host, interval);
     try {
       return await job();
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof ApiError && error.retryAfterMs !== undefined)
         state.unavailableUntil = Date.now() + error.retryAfterMs;
       else if (!(error instanceof ApiError) || [502, 504].includes(error.status))
@@ -69,7 +72,7 @@ export async function paced<T>(host: string, interval: number, job: () => Promis
       throw error;
     }
   } finally {
-    release();
+    void previous.then(release);
   }
 }
 

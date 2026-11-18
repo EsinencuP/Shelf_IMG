@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { abortable, currentSearchSignal } from './search-signal';
 
 export class ApiError extends Error {
   constructor(
@@ -90,6 +91,8 @@ export async function readBody(
   request: Pick<Request, 'headers' | 'body'>,
   maxBytes: number,
 ): Promise<Uint8Array> {
+  const signal = currentSearchSignal();
+  signal?.throwIfAborted();
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes)
     throw new ApiError(413, 'Размер запроса превышает допустимый.');
@@ -99,7 +102,7 @@ export async function readBody(
   let total = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await abortable(reader.read(), signal);
       if (done) break;
       total += value.length;
       if (total > maxBytes) {
@@ -109,6 +112,7 @@ export async function readBody(
       chunks.push(value);
     }
   } finally {
+    if (signal?.aborted) void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
   return Buffer.concat(chunks);

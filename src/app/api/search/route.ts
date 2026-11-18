@@ -17,7 +17,7 @@ export async function POST(request: Request): Promise<Response> {
     const refresh = (body as Record<string, unknown>).refresh ?? false;
     if (typeof refresh !== 'boolean') throw new ApiError(422, 'Некорректный параметр обновления.');
     return await boundedWork(async () => {
-      const result = await searchProducts(product, options, refresh);
+      const result = await searchProducts(product, options, refresh, request.signal);
       const elapsedMs = result.elapsedMs ?? Math.max(0, Math.round(performance.now() - started));
       recordSearchTiming(requestId, elapsedMs, 200, result);
       return Response.json(result, {
@@ -30,7 +30,9 @@ export async function POST(request: Request): Promise<Response> {
       });
     });
   } catch (error) {
-    const response = errorResponse(error);
+    const response = errorResponse(
+      request.signal.aborted ? new ApiError(499, 'Запрос поиска отменён.') : error,
+    );
     recordSearchTiming(requestId, performance.now() - started, response.status);
     response.headers.set('X-Shelf-Request-Id', requestId);
     response.headers.set('X-Shelf-Region', process.env.VERCEL_REGION || 'local');

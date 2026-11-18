@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SearchOptions, SearchResponse } from '../types';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { isSourceFailure } from '../source-status';
+import { abortable } from './search-signal';
 
 interface Entry {
   response: SearchResponse;
@@ -9,7 +10,13 @@ interface Entry {
   expiresAt: number;
 }
 const memory = new Map<string, Entry>();
-const running = new Map<string, Promise<SearchResponse>>();
+interface RunningSearch {
+  promise: Promise<SearchResponse>;
+  controller: AbortController;
+  waiters: number;
+  finished: boolean;
+}
+const running = new Map<string, RunningSearch>();
 const generations = new Map<string, number>();
 
 export function cacheEnabled(): boolean {
@@ -78,15 +85,20 @@ export async function cachedSearch(
   product: SearchProduct,
   options: SearchOptions,
   refresh: boolean,
-  job: () => Promise<SearchResponse>,
+  job: (signal?: AbortSignal) => Promise<SearchResponse>,
+  signal?: AbortSignal,
+  sharedWaitSignal = signal,
 ): Promise<SearchResponse> {
-  if (!cacheEnabled() || options.useCache === false) return job();
+  signal?.throwIfAborted();
+  if (!cacheEnabled() || options.useCache === false) return abortable(job(signal), signal);
   const key = searchCacheKey(product, options);
   if (!refresh) {
     const entry = memory.get(key);
     if (entry && entry.expiresAt > Date.now()) return withHit(entry.response, 'памяти сервера');
     memory.delete(key);
-    if (running.has(key)) return withHit(await running.get(key)!, 'совмещённого запроса');
+    const existing = running.get(key);
+    if (existing && !existing.controller.signal.aborted)
+      return withHit(await followSearch(existing, sharedWaitSignal), 'совмещённого запроса');
   }
   const generation = (generations.get(key) ?? 0) + 1;
   if (generations.size >= 2000) {
@@ -98,31 +110,47 @@ export async function cachedSearch(
     }
   }
   generations.set(key, generation);
-  const operation = (async () => {
-    const response = await job();
-    // An empty result during upstream errors is not reliable absence evidence.
-    const cacheable =
-      response.coverage !== 'partial' &&
-      (response.candidates.length > 0 ||
-        (!!response.diagnostics?.some((item) => item.status === 'ok' || item.status === 'empty') &&
-          !response.diagnostics.some(
-            (item) =>
-              isSourceFailure(item.status) ||
-              /недоступ|ошиб|исчерпан|не получил|некоррект/i.test(item.message ?? ''),
-          )));
-    if (cacheable && generations.get(key) === generation) {
-      const storedAt = Date.now(),
-        ttlSeconds = ttl(response.candidates.length > 0);
-      remember(key, response, storedAt, ttlSeconds);
-    }
-    return response;
-  })();
+  const controller = new AbortController();
+  const promise = Promise.resolve()
+    .then(async () => {
+      controller.signal.throwIfAborted();
+      const response = await job(controller.signal);
+      // An empty result during upstream errors is not reliable absence evidence.
+      const cacheable =
+        response.coverage !== 'partial' &&
+        (response.candidates.length > 0 ||
+          (!!response.diagnostics?.some(
+            (item) => item.status === 'ok' || item.status === 'empty',
+          ) &&
+            !response.diagnostics.some(
+              (item) =>
+                isSourceFailure(item.status) ||
+                /недоступ|ошиб|исчерпан|не получил|некоррект/i.test(item.message ?? ''),
+            )));
+      if (!controller.signal.aborted && cacheable && generations.get(key) === generation) {
+        const storedAt = Date.now(),
+          ttlSeconds = ttl(response.candidates.length > 0);
+        remember(key, response, storedAt, ttlSeconds);
+      }
+      return response;
+    })
+    .finally(() => {
+      operation.finished = true;
+      if (running.get(key) === operation) running.delete(key);
+    });
+  const operation: RunningSearch = { promise, controller, waiters: 0, finished: false };
   // Explicit refresh does not replace another caller's running operation.
   if (!refresh) running.set(key, operation);
+  return followSearch(operation, signal);
+}
+
+async function followSearch(operation: RunningSearch, signal?: AbortSignal) {
+  operation.waiters++;
   try {
-    return await operation;
+    return await abortable(operation.promise, signal);
   } finally {
-    if (running.get(key) === operation) running.delete(key);
+    operation.waiters--;
+    if (!operation.finished && operation.waiters === 0) operation.controller.abort();
   }
 }
 
@@ -138,6 +166,7 @@ function remember(key: string, response: SearchResponse, storedAt: number, secon
 
 export function clearSearchCache() {
   memory.clear();
+  for (const operation of running.values()) operation.controller.abort();
   running.clear();
   generations.clear();
 }

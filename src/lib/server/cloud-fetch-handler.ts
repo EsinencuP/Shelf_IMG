@@ -27,6 +27,7 @@ export async function handleCloudFetch(request: Request): Promise<Response> {
       accept: accept as string | undefined,
       cloudFallback: false,
       referer: referer as string | undefined,
+      signal: request.signal,
     });
     return new Response(new Uint8Array(result.body), {
       headers: {

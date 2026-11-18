@@ -83,3 +83,19 @@ it('also records failed requests without logging their error text', async () => 
   expect(line.elapsedMs).toBeGreaterThanOrEqual(0);
   expect(JSON.stringify(line)).not.toContain('secret-upstream');
 });
+
+it('passes request cancellation through to the search and records the disconnect', async () => {
+  vi.stubEnv('NODE_ENV', 'development');
+  vi.stubEnv('MVP_ACCESS_PASSWORD', '');
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const controller = new AbortController();
+  const cancellable = new Request(request(), { signal: controller.signal });
+  vi.mocked(searchProducts).mockImplementation(async (_product, _options, _refresh, signal) => {
+    expect(signal).toBe(cancellable.signal);
+    controller.abort();
+    signal?.throwIfAborted();
+    throw new Error('Cancellation was not passed through');
+  });
+  expect((await POST(cancellable)).status).toBe(499);
+  expect(JSON.parse(log.mock.calls[0][0] as string)).toMatchObject({ httpStatus: 499 });
+});

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { retryAfterMs, sourceFailure } from '../src/lib/server/source-policy';
 import { cooldownSource, reserveSource } from '../src/lib/server/database';
 import { ApiError, errorResponse } from '../src/lib/server/http';
+import { paced } from '../src/lib/server/catalog-utils';
+import { inSearch } from '../src/lib/server/search-signal';
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('pg', () => ({
   Pool: class {
@@ -56,4 +58,29 @@ it('refuses a shared cooldown immediately rather than sleeping in a Vercel funct
     retryAfterMs: 120000,
   });
   expect(errorResponse(new ApiError(503, 'Wait', 1001)).headers.get('Retry-After')).toBe('2');
+});
+it('removes an expired waiter without letting another request overtake the active source call', async () => {
+  vi.stubEnv('DATABASE_URL', '');
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const first = paced('deadline-fixture.md', 0, async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await entered.promise;
+  const clock = new AbortController();
+  const skipped = vi.fn();
+  const second = inSearch(clock.signal, () => paced('deadline-fixture.md', 0, skipped));
+  const after = vi.fn(async () => 'done');
+  const third = paced('deadline-fixture.md', 0, after);
+  try {
+    clock.abort(new DOMException('Deadline', 'TimeoutError'));
+    await expect(second).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(skipped).not.toHaveBeenCalled();
+    expect(after).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+  }
+  await first;
+  expect(await third).toBe('done');
 });

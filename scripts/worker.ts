@@ -1,6 +1,6 @@
-import { claimJob, finishJob, renewJob } from '../src/lib/server/jobs';
+import { claimJob } from '../src/lib/server/jobs';
 import { database } from '../src/lib/server/database';
-import { searchProducts } from '../src/lib/server/search';
+import { runClaimedSearch } from '../src/lib/server/cloud-worker';
 
 let stop = false;
 process.on('SIGINT', () => {
@@ -20,20 +20,10 @@ while (!stop && Date.now() - idleSince < 600_000) {
       continue;
     }
     idleSince = Date.now();
-    const heartbeat = setInterval(() => {
-      renewJob(job).catch(() => {});
-    }, 30_000);
-    try {
-      await finishJob(job, await searchProducts(job.product, job.options, job.refresh));
-    } catch {
-      await finishJob(
-        job,
-        undefined,
-        'Поиск временно недоступен. Автоматический повтор ограничен тремя попытками.',
-      );
-    } finally {
-      clearInterval(heartbeat);
-    }
+    await runClaimedSearch(
+      job,
+      'Поиск временно недоступен. Автоматический повтор ограничен тремя попытками.',
+    );
     console.log('Job finished:', job.id);
   } catch {
     console.error('Database unavailable; retry in 30 seconds.');

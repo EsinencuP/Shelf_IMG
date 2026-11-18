@@ -27,6 +27,10 @@ import { findApproved } from './library';
 import { reserveSource } from './database';
 import { REGIONAL_SOURCES, OPEN_CATALOGS } from '../search-sources';
 import { checkSourcePhoto } from './source-photo';
+import { abortable, currentSearchSignal, inSearch, waitForSource } from './search-signal';
+import { sourceFailure } from './source-policy';
+
+export const SEARCH_DEADLINE_MS = 90_000;
 
 const idFor = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
 const record = (value: unknown): Record<string, unknown> =>
@@ -57,14 +61,17 @@ async function providerJson(
       ...headers,
     },
   });
-  if (response.status === 404 && emptyOnMissing) return { status: 0 };
-  if (!response.ok)
-    throw new ApiError(
-      response.status === 429 ? 429 : 502,
+  if (!response.ok) {
+    void response.body?.cancel().catch(() => {});
+    if (response.status === 404 && emptyOnMissing) return { status: 0 };
+    throw await sourceFailure(
+      url,
+      { status: response.status, headers: Object.fromEntries(response.headers) },
       response.status === 429
         ? 'Лимит источника исчерпан; повторите позже.'
         : `Источник поиска недоступен (HTTP ${response.status}).`,
     );
+  }
   const body = await readBody(response, 1_000_000);
   try {
     const parsed: unknown = JSON.parse(Buffer.from(body).toString('utf8'));
@@ -80,20 +87,21 @@ async function providerJson(
 let offTail: Promise<void> = Promise.resolve();
 let offStarted = 0;
 async function pacedOff<T>(job: () => Promise<T>): Promise<T> {
+  const signal = currentSearchSignal();
+  signal?.throwIfAborted();
   const previous = offTail;
   let release!: () => void;
   offTail = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await previous;
   try {
-    const wait = Math.max(0, offStarted + 4_100 - Date.now());
-    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+    await abortable(previous, signal);
+    await waitForSource(offStarted + 4_100 - Date.now(), signal);
     offStarted = Date.now();
     await reserveSource('world.openfoodfacts.org', 4100);
     return await job();
   } finally {
-    release();
+    void previous.then(release);
   }
 }
 
@@ -271,9 +279,11 @@ export async function searchProducts(
   product: SearchProduct,
   options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
   refresh = false,
+  signal?: AbortSignal,
 ): Promise<SearchResponse> {
   const started = performance.now();
-  const response = await searchProductsInternal(product, options, refresh);
+  const deadline = AbortSignal.timeout(SEARCH_DEADLINE_MS);
+  const response = await searchProductsInternal(product, options, refresh, deadline, signal);
   const diagnostics = (response.diagnostics ?? []).map(sourceDiagnostic);
   const knownSources = [
     { id: 'food-facts', name: 'Open Food Facts', eanOnly: true },
@@ -288,9 +298,11 @@ export async function searchProducts(
     const reason =
       source.eanOnly && !product.ean
         ? 'Для этого каталога нужен GTIN товара.'
-        : response.outcome === 'found'
-          ? 'Точный кандидат уже найден; источник не опрашивался.'
-          : 'Источник не выбран для категории товара, режима поиска или текущих настроек.';
+        : diagnostics.some((item) => item.id === 'search-deadline')
+          ? 'Общий лимит времени истёк до запроса к источнику.'
+          : response.outcome === 'found'
+            ? 'Точный кандидат уже найден; источник не опрашивался.'
+            : 'Источник не выбран для категории товара, режима поиска или текущих настроек.';
     diagnostics.push(
       sourceDiagnostic({
         id: source.id,
@@ -312,11 +324,18 @@ export async function searchProducts(
 
 async function searchProductsInternal(
   product: SearchProduct,
-  options: SearchOptions = DEFAULT_SEARCH_OPTIONS,
-  refresh = false,
+  options: SearchOptions,
+  refresh: boolean,
+  deadline: AbortSignal,
+  caller?: AbortSignal,
 ): Promise<SearchResponse> {
+  caller?.throwIfAborted();
+  const librarySignal = caller ? AbortSignal.any([caller, deadline]) : deadline;
   try {
-    const approved = !refresh && options.useCache !== false ? await findApproved(product) : [];
+    const approved =
+      !refresh && options.useCache !== false
+        ? await abortable(findApproved(product), librarySignal)
+        : [];
     if (approved.length)
       return {
         candidates: approved,
@@ -334,17 +353,27 @@ async function searchProductsInternal(
         ],
       };
   } catch {
+    caller?.throwIfAborted();
     /* Shared catalogue outages must not prevent fallback internet discovery. */
   }
-  return cachedSearch(product, options, refresh, () =>
-    runSearchProducts(product, options, refresh),
-  );
+  const run = (operation?: AbortSignal) => {
+    const signal = operation ? AbortSignal.any([deadline, operation]) : deadline;
+    return inSearch(signal, () => runSearchProducts(product, options, refresh, signal));
+  };
+  try {
+    return await cachedSearch(product, options, refresh, run, caller, librarySignal);
+  } catch (error) {
+    caller?.throwIfAborted();
+    if (deadline.aborted && error === deadline.reason) return run();
+    throw error;
+  }
 }
 
 async function runSearchProducts(
   suppliedProduct: SearchProduct,
   options: SearchOptions,
   refresh: boolean,
+  signal: AbortSignal,
 ): Promise<SearchResponse> {
   const diagnostics: SearchDiagnostic[] = [];
   const candidates: Candidate[] = [];
@@ -355,6 +384,7 @@ async function runSearchProducts(
     matchCandidate(suppliedProduct, candidate).candidate.matchStatus === 'exact';
   async function checkExactPhoto(items = candidates) {
     for (const candidate of items) {
+      if (signal.aborted) break;
       if (!exact(candidate)) continue;
       if (checkedPhotos.get(candidate.imageUrl)) return true;
       if (checkedPhotos.has(candidate.imageUrl) || checkedPhotos.size >= 3) continue;
@@ -363,7 +393,7 @@ async function runSearchProducts(
         checkedPhotos.set(candidate.imageUrl, await checkSourcePhoto(candidate));
         return true;
       } catch (error) {
-        checkedPhotos.set(candidate.imageUrl, null);
+        if (!signal.aborted) checkedPhotos.set(candidate.imageUrl, null);
         diagnostics.push(
           sourceDiagnostic({
             id: 'image-' + candidate.id,
@@ -378,9 +408,10 @@ async function runSearchProducts(
     return false;
   }
   const run = async (id: string, source: string, job: () => Promise<Candidate[]>) => {
+    if (signal.aborted) return;
     const start = Date.now();
     try {
-      const found = await job();
+      const found = await abortable(job(), signal);
       candidates.push(...found);
       diagnostics.push(
         sourceDiagnostic({
@@ -414,7 +445,7 @@ async function runSearchProducts(
       usableExact = await checkExactPhoto();
     }
   }
-  if (refresh || !usableExact) {
+  if (!signal.aborted && (refresh || !usableExact)) {
     if (
       product.ean &&
       ![product.nameRu, product.nameRo].some((name) => name && !/^Товар с EAN /i.test(name))
@@ -447,14 +478,14 @@ async function runSearchProducts(
         );
       }
     }
-    if (options.mode === 'expanded') {
+    if (!signal.aborted && options.mode === 'expanded') {
       const result = await searchSupplementalCatalogs(product);
       candidates.push(...result.candidates);
       diagnostics.push(...result.diagnostics);
       usableExact = await checkExactPhoto();
     }
   }
-  if (refresh || !usableExact) {
+  if (!signal.aborted && (refresh || !usableExact)) {
     const result = await searchRegionalSources(product, options.mode, options.market);
     candidates.push(...result.candidates);
     diagnostics.push(...result.diagnostics);
@@ -466,7 +497,7 @@ async function runSearchProducts(
       isSourceFailure(item.status),
   );
   const webEnabled = options.useWeb && (options.mode === 'expanded' || regionalUnavailable);
-  const needsWeb = (refresh || !usableExact) && webEnabled;
+  const needsWeb = !signal.aborted && (refresh || !usableExact) && webEnabled;
   const webUnavailable = needsWeb && !configuredWebProviders().length;
   if (needsWeb && !webUnavailable) {
     const result = await searchWebDiscovery(
@@ -500,8 +531,9 @@ async function runSearchProducts(
           status: webUnavailable ? 'not_configured' : 'skipped',
           count: 0,
           elapsedMs: 0,
-          message:
-            usableExact && !webUnavailable
+          message: signal.aborted
+            ? 'Общий лимит времени истёк до запроса к источнику.'
+            : usableExact && !webUnavailable
               ? 'Найден точный EAN; резервная квота сохранена.'
               : !webEnabled
                 ? options.useWeb
@@ -511,6 +543,17 @@ async function runSearchProducts(
         }),
       );
   }
+  if (signal.aborted)
+    diagnostics.push(
+      sourceDiagnostic({
+        id: 'search-deadline',
+        source: 'Общее время поиска',
+        status: 'timeout',
+        count: 0,
+        elapsedMs: SEARCH_DEADLINE_MS,
+        message: 'Истёк общий лимит поиска по товару. Уже найденные кандидаты сохранены.',
+      }),
+    );
   const byImage = new Map<string, Candidate>();
   for (const candidate of candidates) {
     const result = matchCandidate(suppliedProduct, candidate);

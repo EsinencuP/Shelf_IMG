@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { searchProducts } from '@/lib/server/search';
+import { SEARCH_DEADLINE_MS, searchProducts } from '@/lib/server/search';
+import { abortable, currentSearchSignal } from '@/lib/server/search-signal';
 const mocks = vi.hoisted(() => ({
   sostavista: vi.fn(),
   regional: vi.fn(),
@@ -92,8 +93,59 @@ it('preserves the disabled-web choice even when a shop is unavailable', async ()
   expect(mocks.web).not.toHaveBeenCalled();
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+});
+it('keeps a candidate when the SKU deadline interrupts a later source', async () => {
+  const expiry = new AbortController();
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) =>
+    ms === SEARCH_DEADLINE_MS ? expiry.signal : timeout(ms),
+  );
+  mocks.sostavista.mockResolvedValue([exact]);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: RequestInit) => {
+      const pending = abortable(new Promise<never>(() => {}), init.signal!);
+      expiry.abort(new DOMException('Search deadline', 'TimeoutError'));
+      return pending;
+    }),
+  );
+  const result = await searchProducts(
+    product,
+    {
+      mode: 'moldova',
+      useWeb: true,
+      webQueryLimit: 1,
+    },
+    true,
+  );
+  expect(result).toMatchObject({
+    outcome: 'found',
+    coverage: 'partial',
+    candidates: [{ id: 'exact' }],
+  });
+  expect(
+    result.diagnostics?.some((row) => row.id === 'search-deadline' && row.status === 'timeout'),
+  ).toBe(true);
+  expect(mocks.regional).not.toHaveBeenCalled();
+  expect(mocks.web).not.toHaveBeenCalled();
+});
+it('cancels in-flight catalog work immediately when the requester leaves', async () => {
+  const controller = new AbortController();
+  mocks.sostavista.mockImplementation(() => {
+    const signal = currentSearchSignal();
+    expect(signal?.aborted).toBe(false);
+    const pending = abortable(new Promise<never>(() => {}), signal);
+    controller.abort();
+    return pending;
+  });
+  await expect(searchProducts(product, undefined, false, controller.signal)).rejects.toMatchObject({
+    name: 'AbortError',
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  expect(mocks.regional).not.toHaveBeenCalled();
 });
 it('stops after an exact EAN match before other catalogues and web credits', async () => {
   mocks.sostavista.mockResolvedValue([exact]);
