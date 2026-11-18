@@ -55,7 +55,7 @@ const imagesOf = (items: { imageUrl: string }[]) => items.map((item) => item.ima
 
 function sources(env: Record<string, string | undefined>): Source[] {
   return [
-    ...ZAKAZ_STORES.filter((store) => store.id.endsWith('-md')).map((store) => ({
+    ...ZAKAZ_STORES.map((store) => ({
       name: store.name,
       interval: 800,
       url: (ean: string) =>

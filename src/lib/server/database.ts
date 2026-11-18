@@ -4,7 +4,8 @@ import { ApiError } from './http';
 import { abortable, currentSearchSignal, waitForSource } from './search-signal';
 
 let pool: Pool | undefined;
-export const databaseConfigured = () => !!process.env.DATABASE_URL;
+// This QA branch never shares application or provider-throttle state.
+export const databaseConfigured = () => !!process.env.DATABASE_URL && process.env.VERCEL_GIT_COMMIT_REF !== 'codex/shelf-source-qa';
 export function database(): Pool {
   if (!databaseConfigured()) throw new ApiError(503, 'Общая база пока не подключена.');
   if (!pool) {
