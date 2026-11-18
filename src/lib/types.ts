@@ -131,6 +131,8 @@ export interface SearchResponse {
   diagnostics?: SearchDiagnostic[];
   /** Current server execution, including cache lookup and orchestration (not a sum of source times). */
   elapsedMs?: number;
+  /** Time from search start to the first decoded photo of an exact match, on a fresh search. */
+  firstUsablePhotoMs?: number;
   outcome?: 'found' | 'review' | 'not_found' | 'deferred';
   coverage?: 'complete' | 'partial';
   retryable?: boolean;

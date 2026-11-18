@@ -286,7 +286,14 @@ export async function searchProducts(
 ): Promise<SearchResponse> {
   const started = performance.now();
   const deadline = AbortSignal.timeout(SEARCH_DEADLINE_MS);
-  const response = await searchProductsInternal(product, options, refresh, deadline, signal);
+  const response = await searchProductsInternal(
+    product,
+    options,
+    refresh,
+    started,
+    deadline,
+    signal,
+  );
   const diagnostics = (response.diagnostics ?? []).map(sourceDiagnostic);
   const knownSources = [
     { id: 'food-facts', name: 'Open Food Facts', eanOnly: true },
@@ -329,6 +336,7 @@ async function searchProductsInternal(
   product: SearchProduct,
   options: SearchOptions,
   refresh: boolean,
+  started: number,
   deadline: AbortSignal,
   caller?: AbortSignal,
 ): Promise<SearchResponse> {
@@ -361,7 +369,7 @@ async function searchProductsInternal(
   }
   const run = (operation?: AbortSignal) => {
     const signal = operation ? AbortSignal.any([deadline, operation]) : deadline;
-    return inSearch(signal, () => runSearchProducts(product, options, refresh, signal));
+    return inSearch(signal, () => runSearchProducts(product, options, refresh, started, signal));
   };
   try {
     return await cachedSearch(product, options, refresh, run, caller, librarySignal);
@@ -376,12 +384,14 @@ async function runSearchProducts(
   suppliedProduct: SearchProduct,
   options: SearchOptions,
   refresh: boolean,
+  started: number,
   signal: AbortSignal,
 ): Promise<SearchResponse> {
   const diagnostics: SearchDiagnostic[] = [];
   const candidates: Candidate[] = [];
   const warnings: string[] = [];
   let product = suppliedProduct;
+  let firstUsablePhotoMs: number | undefined;
   const checkedPhotos = new Map<string, SourcePhotoCheck | null>();
   const exact = (candidate: Candidate) =>
     matchCandidate(suppliedProduct, candidate).candidate.matchStatus === 'exact';
@@ -394,6 +404,7 @@ async function runSearchProducts(
       const started = Date.now();
       try {
         checkedPhotos.set(candidate.imageUrl, await checkSourcePhoto(candidate));
+        firstUsablePhotoMs ??= Math.max(0, Math.round(performance.now() - started));
         return true;
       } catch (error) {
         if (!signal.aborted) checkedPhotos.set(candidate.imageUrl, null);
@@ -645,6 +656,7 @@ async function runSearchProducts(
     diagnostics,
     warnings,
     outcome,
+    ...(outcome === 'found' && firstUsablePhotoMs !== undefined ? { firstUsablePhotoMs } : {}),
     coverage: incomplete ? 'partial' : 'complete',
     retryable,
   };

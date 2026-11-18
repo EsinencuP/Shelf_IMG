@@ -16,15 +16,19 @@ export function recordSearchTiming(
       fingerprint: process.env.SHELF_BUILD_FINGERPRINT || null,
       httpStatus,
       elapsedMs: Math.max(0, Math.round(elapsedMs)),
+      firstUsablePhotoMs: result?.firstUsablePhotoMs ?? null,
       outcome: result?.outcome ?? (httpStatus >= 400 ? 'error' : 'unknown'),
       coverage: result?.coverage ?? null,
-      sources: (result?.diagnostics ?? []).map(({ id, status, count, elapsedMs, httpStatus }) => ({
-        id,
-        status,
-        count,
-        elapsedMs,
-        ...(httpStatus === undefined ? {} : { httpStatus }),
-      })),
+      sources: (result?.diagnostics ?? []).map(
+        ({ id, status, count, elapsedMs, httpStatus, requests }) => ({
+          id,
+          status,
+          count,
+          elapsedMs,
+          ...(httpStatus === undefined ? {} : { httpStatus }),
+          ...(requests === undefined ? {} : { requests }),
+        }),
+      ),
     }),
   );
 }

@@ -66,8 +66,10 @@ function ttl(positive: boolean): number {
 }
 
 function withHit(response: SearchResponse, source: string): SearchResponse {
+  const cached = structuredClone(response);
+  delete cached.firstUsablePhotoMs;
   return {
-    ...structuredClone(response),
+    ...cached,
     diagnostics: [
       {
         id: 'cache',

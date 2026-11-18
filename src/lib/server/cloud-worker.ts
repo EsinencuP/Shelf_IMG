@@ -4,6 +4,7 @@ import { claimJob, finishJob, renewJob } from './jobs';
 import type { ClaimedJob } from './jobs';
 import { searchProducts } from './search';
 import { boundedWork } from './http';
+import { recordSearchTiming } from './search-timing';
 
 export async function runClaimedSearch(
   job: ClaimedJob,
@@ -11,6 +12,7 @@ export async function runClaimedSearch(
   workerSignal?: AbortSignal,
 ) {
   const lease = new AbortController();
+  const started = performance.now();
   const signal = workerSignal ? AbortSignal.any([workerSignal, lease.signal]) : lease.signal;
   let renewing = false;
   const heartbeat = setInterval(async () => {
@@ -27,9 +29,15 @@ export async function runClaimedSearch(
   try {
     signal.throwIfAborted();
     const result = await searchProducts(job.product, job.options, job.refresh, signal);
-    if (!signal.aborted) await finishJob(job, result);
+    if (!signal.aborted) {
+      await finishJob(job, result);
+      recordSearchTiming(job.id, result.elapsedMs ?? performance.now() - started, 200, result);
+    }
   } catch {
-    if (!signal.aborted) await finishJob(job, undefined, retryMessage);
+    if (!signal.aborted) {
+      await finishJob(job, undefined, retryMessage);
+      recordSearchTiming(job.id, performance.now() - started, 503);
+    }
   } finally {
     clearInterval(heartbeat);
   }

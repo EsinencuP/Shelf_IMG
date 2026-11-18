@@ -28,6 +28,7 @@ it('logs timings and statuses without product attributes or upstream secrets', (
         count: 0,
         elapsedMs: 18,
         httpStatus: 403,
+        attempts: [{ query: 'secret-query', status: 'blocked', count: 0, elapsedMs: 18 }],
       },
     ],
   });
@@ -37,6 +38,7 @@ it('logs timings and statuses without product attributes or upstream secrets', (
     event: 'shelf.search',
     region: 'fra1',
     elapsedMs: 20,
+    firstUsablePhotoMs: null,
     requestId: 'run-id',
     sources: [{ id: 'metro-md', elapsedMs: 18, httpStatus: 403 }],
   });
@@ -58,17 +60,18 @@ it('exposes server timing and a log correlation ID in search responses', async (
     candidates: [],
     warnings: [],
     diagnostics: [],
-    outcome: 'not_found',
+    outcome: 'found',
     elapsedMs: 37,
+    firstUsablePhotoMs: 16,
   });
   const response = await POST(request());
   expect(response.status).toBe(200);
-  expect(response.headers.get('server-timing')).toBe('search;dur=37');
+  expect(response.headers.get('server-timing')).toBe('search;dur=37, first-photo;dur=16');
   expect(response.headers.get('x-shelf-region')).toBe('fra1');
   expect(JSON.parse(log.mock.calls[0][0] as string).requestId).toBe(
     response.headers.get('x-shelf-request-id'),
   );
-  expect((await response.json()).elapsedMs).toBe(37);
+  expect(await response.json()).toMatchObject({ elapsedMs: 37, firstUsablePhotoMs: 16 });
 });
 
 it('also records failed requests without logging their error text', async () => {

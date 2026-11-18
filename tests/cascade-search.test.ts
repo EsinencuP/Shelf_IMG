@@ -161,9 +161,16 @@ it('cancels in-flight catalog work immediately when the requester leaves', async
   expect(mocks.regional).not.toHaveBeenCalled();
 });
 it('stops after an exact EAN match before other catalogues and web credits', async () => {
+  vi.stubEnv('SEARCH_CACHE_ENABLED', 'true');
   mocks.sostavista.mockResolvedValue([exact]);
   const result = await searchProducts(product);
   expect(result.outcome).toBe('found');
+  expect(result.firstUsablePhotoMs).toEqual(expect.any(Number));
+  expect(result.firstUsablePhotoMs!).toBeLessThanOrEqual(result.elapsedMs!);
+  const cached = await searchProducts(product);
+  expect(cached.outcome).toBe('found');
+  expect(cached.firstUsablePhotoMs).toBeUndefined();
+  expect(mocks.sostavista).toHaveBeenCalledOnce();
   expect(fetch).not.toHaveBeenCalled();
   expect(mocks.regional).not.toHaveBeenCalled();
   expect(mocks.supplemental).not.toHaveBeenCalled();

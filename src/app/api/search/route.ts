@@ -20,10 +20,13 @@ export async function POST(request: Request): Promise<Response> {
       const result = await searchProducts(product, options, refresh, request.signal);
       const elapsedMs = result.elapsedMs ?? Math.max(0, Math.round(performance.now() - started));
       recordSearchTiming(requestId, elapsedMs, 200, result);
+      const timing = [`search;dur=${elapsedMs}`];
+      if (result.firstUsablePhotoMs !== undefined)
+        timing.push(`first-photo;dur=${result.firstUsablePhotoMs}`);
       return Response.json(result, {
         headers: {
           'Cache-Control': 'no-store',
-          'Server-Timing': `search;dur=${elapsedMs}`,
+          'Server-Timing': timing.join(', '),
           'X-Shelf-Request-Id': requestId,
           'X-Shelf-Region': process.env.VERCEL_REGION || 'local',
         },

@@ -10,6 +10,7 @@ export interface BaselineSample {
   httpStatus: number;
   httpElapsedMs: number;
   elapsedMs?: number;
+  firstUsablePhotoMs?: number;
   region?: string;
   requestId?: string;
   sources: SearchDiagnostic[];
@@ -57,6 +58,13 @@ export function summarizeBaseline(samples: BaselineSample[]) {
       missingTiming: rows.filter((row) => row.httpStatus === 200 && row.elapsedMs === undefined)
         .length,
       server: timings(valid.map((row) => row.elapsedMs!)),
+      firstPhoto: timings(
+        rows.flatMap((row) =>
+          row.httpStatus === 200 && row.firstUsablePhotoMs !== undefined
+            ? [row.firstUsablePhotoMs]
+            : [],
+        ),
+      ),
       http: timings(rows.map((row) => row.httpElapsedMs)),
       sources,
     };
@@ -71,6 +79,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     console.log(result.environment);
     console.table([
       { metric: 'server', ...result.server },
+      { metric: 'first-photo', ...result.firstPhoto },
       { metric: 'http', ...result.http },
     ]);
     console.table(result.sources);

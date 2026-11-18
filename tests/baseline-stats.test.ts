@@ -20,6 +20,7 @@ it('separates missing measurements and HTTP failures from successful search dura
     httpStatus: 200,
     httpElapsedMs: 30,
     elapsedMs: 20,
+    firstUsablePhotoMs: 12,
     sources: [
       { id: 'a', source: 'A', status: 'blocked', count: 0, elapsedMs: 10, httpStatus: 403 },
       { id: 'b', source: 'B', status: 'disabled', count: 0, elapsedMs: 0 },
@@ -27,10 +28,11 @@ it('separates missing measurements and HTTP failures from successful search dura
   };
   const [result] = summarizeBaseline([
     base,
-    { ...base, elapsedMs: undefined },
+    { ...base, elapsedMs: undefined, firstUsablePhotoMs: undefined },
     { ...base, httpStatus: 504 },
   ]);
   expect(result.server).toMatchObject({ n: 1, p50Ms: 20 });
+  expect(result.firstPhoto).toMatchObject({ n: 1, p95Ms: 12 });
   expect(result).toMatchObject({ requests: 3, httpFailures: 1, missingTiming: 1 });
   expect(result.sources.find((row) => row.id === 'a')).toMatchObject({ n: 3, http403: 3 });
   expect(result.sources.find((row) => row.id === 'b')).toMatchObject({ n: 0, p50Ms: null });
