@@ -78,9 +78,14 @@ try {
 
   const addonDir = join(stage, 'node_modules', nativePackages[0], 'lib');
   const vipsDir = join(stage, 'node_modules', nativePackages[1], 'lib');
+  const addon = (await readdir(addonDir)).find(
+    (file) =>
+      file === `sharp-linux-arm64-${sharp.version}.node` || file === 'sharp-linux-arm64.node',
+  );
   const vips = (await readdir(vipsDir)).find((file) => /^libvips-cpp\.so(?:\.|$)/.test(file));
+  if (!addon) throw new Error('Sharp ARM64 addon is missing.');
   if (!vips) throw new Error('Sharp libvips shared library is missing.');
-  for (const file of [join(addonDir, 'sharp-linux-arm64.node'), join(vipsDir, vips)]) {
+  for (const file of [join(addonDir, addon), join(vipsDir, vips)]) {
     const binary = await readFile(file);
     if (
       binary.length < 20 ||
