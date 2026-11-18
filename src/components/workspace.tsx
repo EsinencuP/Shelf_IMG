@@ -269,7 +269,18 @@ export default function Workspace() {
       .finally(() => {
         if (alive) setLoaded(true);
       });
-    configPromiseRef.current = fetch('/api/confi      setToast({
+    configPromiseRef.current = fetch('/api/config')
+      .then((response) => response.json())
+      .then((value) => {
+        if (alive) {
+          setConfig(value);
+          configRef.current = value;
+        }
+        return value as AppConfig;
+      })
+      .catch(() => {
+        if (alive)
+          setToast({
             message: 'Не удалось проверить источники. Загрузка своих фото доступна.',
             error: true,
           });
