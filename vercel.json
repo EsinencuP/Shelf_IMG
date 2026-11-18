@@ -1,3 +1,5 @@
 {
-  "buildCommand": "node scripts/stage-arm-qa-artifact.mjs && npm run build"
+  "framework": null,
+  "buildCommand": "node scripts/run-arm-abi-qa.mjs",
+  "outputDirectory": "arm-abi-evidence"
 }
