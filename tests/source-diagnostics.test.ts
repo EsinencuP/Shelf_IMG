@@ -63,3 +63,62 @@ it('retains successful photos and the failure when another Linella card fails', 
     reason: 'Квота карточек исчерпана.',
   });
 });
+
+it('keeps a METRO Moldova candidate when a later query for the same SKU is blocked', async () => {
+  const photo = 'https://metro.zakaz.md/nutella.jpg';
+  vi.mocked(publicHtml).mockResolvedValue('<html></html>');
+  vi.mocked(publicJson).mockImplementation(async (url) => {
+    const endpoint = new URL(url);
+    if (!endpoint.pathname.includes('/48415601/')) return { results: [] };
+    if (endpoint.searchParams.get('q') !== product.ean)
+      throw new ApiError(502, 'Источник ответил HTTP 403.');
+    return {
+      results: [
+        {
+          title: product.nameRu,
+          img: { s1350x1350: photo },
+          web_url: 'https://metro.zakaz.md/nutella',
+        },
+      ],
+    };
+  });
+  const result = await searchRegionalSources(product, 'moldova');
+  expect(result.candidates).toMatchObject([
+    { imageUrl: photo, sourceMarket: 'MD', gtinExact: false },
+  ]);
+  expect(result.diagnostics.find(({ id }) => id === 'metro-md')).toMatchObject({
+    status: 'blocked',
+    count: 1,
+    reason: 'Источник ответил HTTP 403.',
+  });
+});
+
+it('reads a Linella card found before a later catalog query times out', async () => {
+  vi.mocked(publicJson).mockResolvedValue({ results: [] });
+  vi.mocked(publicHtml).mockImplementation(async (url) => {
+    const query = new URL(url).searchParams.get('q');
+    if (query === product.ean) return '<a class="product-title" href="/nutella/">Nutella 400g</a>';
+    if (query) throw new ApiError(504, 'Источник не ответил вовремя.');
+    return '<html>Product</html>';
+  });
+  vi.mocked(catalogProducts).mockReturnValue([
+    {
+      id: 'photo',
+      title: product.nameRu,
+      imageUrl: 'https://linella.md/photo.jpg',
+      pageUrl: 'https://linella.md/nutella/',
+      source: 'Linella',
+      rights: 'unknown',
+      gtinExact: true,
+      gtin: product.ean,
+      warnings: [],
+    },
+  ]);
+  const result = await searchRegionalSources(product, 'moldova');
+  expect(result.candidates).toMatchObject([{ id: 'photo', gtinExact: true }]);
+  expect(result.diagnostics.find(({ id }) => id === 'linella')).toMatchObject({
+    status: 'timeout',
+    count: 1,
+    reason: 'Источник не ответил вовремя.',
+  });
+});

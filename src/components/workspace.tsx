@@ -1589,15 +1589,18 @@ export default function Workspace() {
                             ? nextReview
                             : undefined
                         }
-                        onSearch={(expanded, byName) =>
+                        onSearch={(expanded, byName, supplier) =>
                           void runSearch(
                             [activeRow],
-                            expanded ? { ...searchOptions, mode: 'expanded' } : searchOptions,
+                            expanded
+                              ? { ...searchOptions, mode: 'expanded', ...supplier }
+                              : searchOptions,
                             true,
                             byName,
                           )
                         }
                         searchMode={searchOptions.mode}
+                        webSearchEnabled={searchOptions.useWeb}
                       />
                     )}
                   </div>

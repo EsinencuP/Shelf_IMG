@@ -82,6 +82,11 @@ export function languageQueries(product: SearchProduct): string[] {
   return [...new Set(result)];
 }
 
+/** Offer a translated title for discovery while leaving the imported identity unchanged. */
+export function withMarketName(product: SearchProduct, name?: string): SearchProduct {
+  return name ? { ...product, nameRo: name, nameRu: '' } : product;
+}
+
 export function nativeQueries(product: SearchProduct): string[] {
   const names = languageQueries(product);
   const short = names.map((name) =>
@@ -95,16 +100,18 @@ export function nativeQueries(product: SearchProduct): string[] {
   return [...new Set(queries)].filter(Boolean).slice(0, 3);
 }
 
+function webTitleQueries(names: string[], quantity: string): string[] {
+  return names.map((name) =>
+    [name, quantity && !name.includes(quantity) ? quantity : ''].filter(Boolean).join(' '),
+  );
+}
+
 /** Exact barcode first, then both descriptions and a Moldova/manufacturer discovery query. */
 export function webQueries(product: SearchProduct, limit = 4): string[] {
   const names = languageQueries(product);
   const queries = [
     ...(product.ean ? [`"${product.ean.replace(/[\s-]/g, '')}"`] : []),
-    ...names.map((name) =>
-      [name, product.quantity && !name.includes(product.quantity) ? product.quantity : '']
-        .filter(Boolean)
-        .join(' '),
-    ),
+    ...webTitleQueries(names, product.quantity),
   ];
   if (names[0]) {
     const name = canonicalText(`${product.brand} ${names.join(' ')}`);
@@ -119,6 +126,14 @@ export function webQueries(product: SearchProduct, limit = 4): string[] {
     );
   }
   return [...new Set(queries)].map((query) => query.slice(0, 400)).slice(0, limit);
+}
+
+export function supplierWebQueries(product: SearchProduct, limit: number): string[] {
+  const [name, ...alternatives] = webTitleQueries(languageQueries(product), product.quantity);
+  const barcode = product.ean ? `"${product.ean.replace(/[\s-]/g, '')}"` : undefined;
+  return [name, barcode, ...alternatives]
+    .filter((query): query is string => !!query)
+    .slice(0, limit);
 }
 
 const CATEGORY_TERMS: Record<string, string> = {

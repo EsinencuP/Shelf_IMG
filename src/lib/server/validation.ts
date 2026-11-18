@@ -10,7 +10,14 @@ export function validateSearchOptions(input: unknown): SearchOptions {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new ApiError(422, 'Некорректные параметры поиска.');
   const record = input as Record<string, unknown>;
-  const { mode = 'expanded', useWeb = true, webQueryLimit = 4, useCache = true, market } = record;
+  const {
+    mode = 'expanded',
+    useWeb = true,
+    webQueryLimit = 4,
+    useCache = true,
+    market,
+    marketName,
+  } = record;
   if (
     !['moldova', 'expanded'].includes(String(mode)) ||
     typeof mode !== 'string' ||
@@ -20,12 +27,27 @@ export function validateSearchOptions(input: unknown): SearchOptions {
     (market !== undefined && !isSupplierMarket(market))
   )
     throw new ApiError(422, 'Некорректный режим или лимит поиска.');
+  if (
+    marketName !== undefined &&
+    (mode !== 'expanded' ||
+      !isSupplierMarket(market) ||
+      typeof marketName !== 'string' ||
+      marketName.length > 200 ||
+      /[\u0000-\u001f\u007f]/.test(marketName))
+  )
+    throw new ApiError(
+      422,
+      'Для названия на языке поставщика выберите рынок и укажите до 200 символов.',
+    );
   return {
     mode: mode as SearchOptions['mode'],
     useWeb,
     webQueryLimit: webQueryLimit as number,
     useCache,
     ...(isSupplierMarket(market) ? { market } : {}),
+    ...(typeof marketName === 'string' && marketName.trim()
+      ? { marketName: marketName.trim() }
+      : {}),
   };
 }
 

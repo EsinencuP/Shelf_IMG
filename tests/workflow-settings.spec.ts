@@ -109,6 +109,24 @@ test('batch search snapshot, per-SKU expanded retry, guided approval and JPG inv
     useCache: true,
   });
   expect(searches.at(-1)?.refresh).toBe(true);
+  await review.getByText('Поиск на рынке поставщика', { exact: true }).click();
+  await review.getByLabel('Рынок для этого SKU').selectOption('UA');
+  await review.getByLabel('Название на языке поставщика (необязательно)').fill('Тестова пляшка');
+  await review.getByRole('button', { name: 'Искать на выбранном рынке', exact: true }).click();
+  await expect.poll(() => searches.length).toBe(4);
+  expect(searches.at(-1)).toMatchObject({
+    nameRu: 'Тестовая бутылка',
+    searchOptions: {
+      mode: 'expanded',
+      useWeb: true,
+      webQueryLimit: 4,
+      useCache: true,
+      market: 'UA',
+      marketName: 'Тестова пляшка',
+    },
+    refresh: true,
+  });
+  await expect(page.locator('.status-not_found')).toHaveCount(2);
   await expect(page.locator('.batch-search-controls')).toContainText('Молдова');
   const buffer = await sharp(
     Buffer.from(

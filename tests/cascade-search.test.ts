@@ -78,7 +78,14 @@ it('recovers unavailable Moldova shops using only the permitted regional web res
   mocks.web.mockResolvedValue({ candidates: [exact], diagnostics: [], warnings: [] });
   const result = await searchProducts(product, { mode: 'moldova', useWeb: true, webQueryLimit: 2 });
   expect(result.outcome).toBe('found');
-  expect(mocks.web).toHaveBeenCalledWith(product, 2, 'moldova', undefined, expect.any(Function));
+  expect(mocks.web).toHaveBeenCalledWith(
+    product,
+    2,
+    'moldova',
+    undefined,
+    expect.any(Function),
+    undefined,
+  );
   expect(mocks.supplemental).not.toHaveBeenCalled();
 });
 it('preserves the disabled-web choice even when a shop is unavailable', async () => {

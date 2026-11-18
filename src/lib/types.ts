@@ -96,6 +96,7 @@ export interface SearchOptions {
   webQueryLimit: number;
   useCache?: boolean;
   market?: SupplierMarket;
+  marketName?: string;
 }
 
 export const DEFAULT_SEARCH_OPTIONS: SearchOptions = {

@@ -82,6 +82,21 @@ describe('search modes and API budgets', () => {
     expect(response.status).toBe(422);
     expect(publicJson).not.toHaveBeenCalled();
   });
+  it('only accepts a bounded supplier-language title with an expanded supplier market', () => {
+    expect(validateSearchOptions({ market: 'UA', marketName: '  Сир домашній  ' })).toMatchObject({
+      mode: 'expanded',
+      market: 'UA',
+      marketName: 'Сир домашній',
+    });
+    for (const options of [
+      { marketName: 'Сир домашній' },
+      { mode: 'moldova', market: 'UA', marketName: 'Сир домашній' },
+      { market: 'UA', marketName: 'a'.repeat(201) },
+      { market: 'UA', marketName: 'Сир\nдомашній' },
+    ]) {
+      expect(() => validateSearchOptions(options)).toThrow();
+    }
+  });
   it('Moldova mode actually avoids foreign catalogs, supplementary lookups and configured Brave', async () => {
     vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-key');
     const fetcher = vi.fn();

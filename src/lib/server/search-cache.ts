@@ -36,10 +36,11 @@ export function searchCacheKey(product: SearchProduct, options: SearchOptions): 
   return createHash('sha256')
     .update(
       JSON.stringify({
-        version: 10,
+        version: 11,
         product: normalized,
         mode: options.mode,
         market: options.market,
+        marketName: options.marketName?.normalize('NFKC').trim(),
         useWeb: options.useWeb,
         webQueryLimit: options.webQueryLimit,
         sources: [

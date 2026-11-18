@@ -489,7 +489,12 @@ async function runSearchProducts(
     }
   }
   if (!signal.aborted && (refresh || !usableExact)) {
-    const result = await searchRegionalSources(product, options.mode, options.market);
+    const result = await searchRegionalSources(
+      product,
+      options.mode,
+      options.market,
+      options.marketName,
+    );
     candidates.push(...result.candidates);
     diagnostics.push(...result.diagnostics);
     usableExact = await checkExactPhoto();
@@ -509,6 +514,7 @@ async function runSearchProducts(
       options.mode,
       options.market,
       checkExactPhoto,
+      options.marketName,
     );
     candidates.push(...result.candidates);
     diagnostics.push(...result.diagnostics);

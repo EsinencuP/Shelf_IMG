@@ -302,3 +302,54 @@ it('keeps Moldova recovery queries and all fetched source pages inside the regio
   expect(discoverPage).toHaveBeenCalledWith(mdUrl, product);
   expect(found.candidates.every((item) => item.pageUrl === mdUrl)).toBe(true);
 });
+
+it('uses the Ukrainian title and supplier sites, with an independent exact barcode query', async () => {
+  brave();
+  vi.stubEnv('TAVILY_API_KEY', '');
+  vi.stubEnv('BRAVE_MAX_QUERIES', '2');
+  vi.mocked(serviceJson).mockResolvedValue({ web: { results: [] } });
+  const title = 'Горіхова паста Nutella';
+  await searchWebDiscovery(product, 2, 'expanded', 'UA', undefined, title);
+  const requests = vi.mocked(serviceJson).mock.calls.map(([url]) => url.searchParams);
+  expect(requests).toHaveLength(2);
+  expect(requests[0].get('q')).toBe(
+    'Ferrero Горіхова паста Nutella 400g (site:silpo.ua OR site:varus.ua OR site:roshen.com OR site:zakaz.ua) lang:uk',
+  );
+  expect(requests[0].get('country')).toBe('ALL');
+  expect(requests[1].get('q')).toBe(
+    '"3017620422003" (site:silpo.ua OR site:varus.ua OR site:roshen.com OR site:zakaz.ua)',
+  );
+});
+
+it('restricts Tavily to Romanian sources and filters out an out-of-market page', async () => {
+  vi.stubEnv('BRAVE_SEARCH_API_KEY', '');
+  vi.stubEnv('TAVILY_API_KEY', 'tvly-test');
+  const roUrl = 'https://auchan.ro/nutella';
+  const title = 'Cremă tartinabilă Nutella';
+  vi.mocked(serviceJson)
+    .mockResolvedValueOnce(free)
+    .mockResolvedValueOnce({
+      results: [
+        { ...result, title, url: 'https://metro.zakaz.md/nutella' },
+        { ...result, title, url: roUrl },
+      ],
+    });
+  vi.mocked(discoverPage).mockResolvedValue({
+    candidates: [{ ...candidate, pageUrl: roUrl }],
+    rendered: false,
+  });
+  const found = await searchWebDiscovery(product, 1, 'expanded', 'RO', undefined, title);
+  expect(vi.mocked(serviceJson).mock.calls[1][2]).toMatchObject({
+    query: 'Ferrero Cremă tartinabilă Nutella 400g',
+    country: 'romania',
+    language: 'ro',
+    include_domains: ['auchan.ro', 'carrefour.ro', 'mega-image.ro', 'sezamo.ro'],
+    include_domains_mode: 'restrict',
+  });
+  expect(discoverPage).toHaveBeenCalledExactlyOnceWith(roUrl, {
+    ...product,
+    nameRu: '',
+    nameRo: title,
+  });
+  expect(found.candidates).toMatchObject([{ pageUrl: roUrl, sourceMarket: 'RO' }]);
+});

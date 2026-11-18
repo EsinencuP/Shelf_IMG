@@ -10,7 +10,7 @@ import {
   publicHtml,
   publicJson,
 } from './catalog-utils';
-import { nativeQueries, canonicalText, titleRelevance } from './search-queries';
+import { nativeQueries, canonicalText, titleRelevance, withMarketName } from './search-queries';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { matchCandidate } from './matching';
 import { ApiError } from './http';
@@ -110,7 +110,11 @@ export function zakazCandidates(data: unknown, source: (typeof ZAKAZ_STORES)[num
   });
 }
 
-function relevant(product: SearchProduct, candidates: Candidate[]): Candidate[] {
+function relevant(
+  product: SearchProduct,
+  candidates: Candidate[],
+  discovery = product,
+): Candidate[] {
   return candidates
     .filter((candidate) => {
       if (matchCandidate(product, candidate).rejected) return false;
@@ -120,35 +124,40 @@ function relevant(product: SearchProduct, candidates: Candidate[]): Candidate[] 
         normalizeGtin(product.ean) === normalizeGtin(candidate.gtin)
       )
         return true;
-      return titleRelevance(product, candidate.title) >= 0.35;
+      return titleRelevance(discovery, candidate.title) >= 0.35;
     })
-    .sort((a, b) => titleRelevance(product, b.title) - titleRelevance(product, a.title));
+    .sort((a, b) => titleRelevance(discovery, b.title) - titleRelevance(discovery, a.title));
 }
 
 async function searchZakaz(
   product: SearchProduct,
   source: (typeof ZAKAZ_STORES)[number],
+  marketName?: string,
 ): Promise<Candidate[]> {
   const result = new Map<string, Candidate>();
-  for (const query of nativeQueries(
-    source.api.endsWith('.ua') && product.nameRu ? { ...product, nameRo: '' } : product,
-  ).slice(0, 2)) {
-    const data = await publicJson(
-      `https://${source.api}/stores/${source.store}/products/search/?${new URLSearchParams({ q: query })}`,
-      800,
-    );
-    if (!Array.isArray(obj(data).results))
-      throw new ApiError(502, 'Каталог вернул некорректную выдачу.');
-    for (const candidate of relevant(product, zakazCandidates(data, source)))
-      result.set(candidate.imageUrl, candidate);
-    if (
-      product.ean &&
-      [...result.values()].some(
-        (candidate) => normalizeGtin(candidate.gtin || '') === normalizeGtin(product.ean),
+  const discovery = withMarketName(product, marketName);
+  try {
+    for (const query of nativeQueries(discovery)) {
+      const data = await publicJson(
+        `https://${source.api}/stores/${source.store}/products/search/?${new URLSearchParams({ q: query })}`,
+        800,
+      );
+      if (!Array.isArray(obj(data).results))
+        throw new ApiError(502, 'Каталог вернул некорректную выдачу.');
+      for (const candidate of relevant(product, zakazCandidates(data, source), discovery))
+        result.set(candidate.imageUrl, candidate);
+      if (
+        product.ean &&
+        [...result.values()].some(
+          (candidate) => normalizeGtin(candidate.gtin || '') === normalizeGtin(product.ean),
+        )
       )
-    )
-      break;
-    if (!product.ean && result.size >= 3) break;
+        break;
+      if (!product.ean && result.size >= 3) break;
+    }
+  } catch (error) {
+    if (result.size) throw new PartialCatalogFailure([...result.values()].slice(0, 4), error);
+    throw error;
   }
   return [...result.values()].slice(0, 4);
 }
@@ -174,11 +183,17 @@ export function linellaLinks(
 
 async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
   const links = new Map<string, { title: string; url: string; thumbnail: string }>();
+  let failedSearch: PromiseRejectedResult | undefined;
   for (const query of nativeQueries(product).slice(0, 3)) {
     const html = await publicHtml(
       `https://linella.md/?${new URLSearchParams({ dispatch: 'products.search', q: query, search_performed: 'Y', sl: /[а-я]/i.test(query) ? 'ru' : 'ro' })}`,
-    );
-    for (const link of linellaLinks(html, 'https://linella.md/')) {
+    ).catch((reason: unknown) => {
+      failedSearch = { status: 'rejected', reason };
+      return null;
+    });
+    if (html === null) break;
+    const pageLinks = linellaLinks(html, 'https://linella.md/');
+    for (const link of pageLinks) {
       const item: Candidate = {
         id: candidateId(link.url),
         title: link.title,
@@ -192,7 +207,7 @@ async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
       };
       if (
         (titleRelevance(product, link.title) >= 0.35 ||
-          (product.ean === query && linellaLinks(html, 'https://linella.md/').length <= 3)) &&
+          (product.ean === query && pageLinks.length <= 3)) &&
         !matchCandidate(product, item).rejected
       )
         links.set(link.url, link);
@@ -211,6 +226,7 @@ async function searchLinella(product: SearchProduct): Promise<Candidate[]> {
       }));
     }),
   );
+  if (failedSearch) results.unshift(failedSearch);
   return collectCards(results);
 }
 
@@ -309,12 +325,18 @@ export async function searchRegionalSources(
   product: SearchProduct,
   mode: 'moldova' | 'expanded' = 'expanded',
   market?: SupplierMarket,
+  marketName?: string,
 ): Promise<{ candidates: Candidate[]; diagnostics: SearchDiagnostic[] }> {
   const jobs = [
     ...ZAKAZ_STORES.map((source) => ({
       id: source.id,
       name: source.name,
-      run: () => searchZakaz(product, source),
+      run: () =>
+        searchZakaz(
+          product,
+          source,
+          market === 'UA' && source.id.endsWith('-ua') ? marketName : undefined,
+        ),
     })),
     { id: 'linella', name: 'Linella', run: () => searchLinella(product) },
     { id: 'bucuria', name: 'Bucuria — производитель', run: () => searchBucuria(product) },
@@ -327,7 +349,7 @@ export async function searchRegionalSources(
       const start = Date.now();
       const sourceMarket: 'UA' | 'MD' = job.id.endsWith('-ua') ? 'UA' : 'MD';
       try {
-        if ((mode === 'moldova' || market === 'RO') && sourceMarket === 'UA') {
+        if ((mode === 'moldova' || (market && market !== 'UA')) && sourceMarket === 'UA') {
           diagnostics.push(
             sourceDiagnostic({
               id: job.id,

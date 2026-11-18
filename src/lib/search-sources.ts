@@ -22,8 +22,18 @@ export const REGIONAL_SOURCES = [
 ] as const;
 
 export const SUPPLIER_MARKETS = {
-  UA: { label: 'Украина', domains: ['silpo.ua', 'varus.ua', 'roshen.com', 'zakaz.ua'] },
-  RO: { label: 'Румыния', domains: ['auchan.ro', 'carrefour.ro', 'mega-image.ro', 'sezamo.ro'] },
+  UA: {
+    label: 'Украина',
+    language: 'uk',
+    country: 'ukraine',
+    domains: ['silpo.ua', 'varus.ua', 'roshen.com', 'zakaz.ua'],
+  },
+  RO: {
+    label: 'Румыния',
+    language: 'ro',
+    country: 'romania',
+    domains: ['auchan.ro', 'carrefour.ro', 'mega-image.ro', 'sezamo.ro'],
+  },
 } as const;
 
 export type SupplierMarket = keyof typeof SUPPLIER_MARKETS;

@@ -13,13 +13,20 @@ import {
   ArrowRight,
   Search,
 } from 'lucide-react';
-import type { Candidate, ExportProfile, ProductRow, VisionResult } from '@/lib/types';
+import type {
+  Candidate,
+  ExportProfile,
+  ProductRow,
+  SearchOptions,
+  VisionResult,
+} from '@/lib/types';
 import { apiFetch, candidateImageEndpoint } from '@/lib/client-api';
 import { safeFileStem, downloadBlob } from '@/lib/export';
 import BlobImage from './blob-image';
 import CandidatePhoto from './candidate-photo';
 import { isSourceFailure, sourceDiagnostic, SOURCE_STATUS_LABELS } from '@/lib/source-status';
 import { canSearchByName, rowSearchError, rowSearchProduct, rowTitle } from '@/lib/row-search';
+import { isSupplierMarket, SUPPLIER_MARKETS, type SupplierMarket } from '@/lib/search-sources';
 
 export default function ReviewPane({
   row,
@@ -35,6 +42,7 @@ export default function ReviewPane({
   onNext,
   onSearch,
   searchMode,
+  webSearchEnabled,
 }: {
   row: ProductRow;
   profile: ExportProfile;
@@ -47,12 +55,19 @@ export default function ReviewPane({
   onNotice: (message: string, error?: boolean) => void;
   onBusy: (busy: boolean) => void;
   onNext?: () => void;
-  onSearch: (expanded: boolean, byName?: boolean) => void;
+  onSearch: (
+    expanded: boolean,
+    byName?: boolean,
+    supplier?: Pick<SearchOptions, 'market' | 'marketName'>,
+  ) => void;
   searchMode: 'moldova' | 'expanded';
+  webSearchEnabled: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [url, setUrl] = useState('');
+  const [market, setMarket] = useState<SupplierMarket | ''>(row.lastSearchOptions?.market ?? '');
+  const [marketName, setMarketName] = useState(row.lastSearchOptions?.marketName ?? '');
   const headingRef = useRef<HTMLHeadingElement>(null);
   const candidateImages = useRef(new Map<Candidate, Blob>());
   useEffect(() => {
@@ -74,6 +89,7 @@ export default function ReviewPane({
   const nameSearch = canSearchByName(row);
   const validIdentity = !inputError || nameSearch;
   const locked = busy || disabled;
+  const marketRequiresWeb = market === 'RO' && !webSearchEnabled;
   const patch = (value: Partial<ProductRow>) => onPatch(row.id, value);
 
   async function chooseCandidate(item: Candidate) {
@@ -456,6 +472,58 @@ export default function ReviewPane({
               </button>
             )}
           </div>
+          <details className="search-diagnostics">
+            <summary>Поиск на рынке поставщика</summary>
+            <div className="settings-fields">
+              <label>
+                Рынок для этого SKU
+                <select
+                  value={market}
+                  disabled={locked}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setMarket(isSupplierMarket(value) ? value : '');
+                    setMarketName('');
+                  }}
+                >
+                  <option value="">Выберите рынок</option>
+                  {Object.entries(SUPPLIER_MARKETS).map(([code, { label }]) => (
+                    <option key={code} value={code}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {market && (
+                <label>
+                  Название на языке поставщика (необязательно)
+                  <input
+                    type="text"
+                    maxLength={200}
+                    value={marketName}
+                    disabled={locked}
+                    onChange={(event) => setMarketName(event.currentTarget.value)}
+                  />
+                </label>
+              )}
+              {marketRequiresWeb && (
+                <p>Для поиска в Румынии включите веб-поиск в настройках партии.</p>
+              )}
+              <button
+                className="button secondary"
+                disabled={locked || !validIdentity || !market || marketRequiresWeb}
+                onClick={() => {
+                  if (market)
+                    onSearch(true, nameSearch, {
+                      market,
+                      marketName: marketName.trim() || undefined,
+                    });
+                }}
+              >
+                Искать на выбранном рынке
+              </button>
+            </div>
+          </details>
           <div className="section-label">
             <h3>Найденные фотографии</h3>
             <span>{row.candidates.length}</span>

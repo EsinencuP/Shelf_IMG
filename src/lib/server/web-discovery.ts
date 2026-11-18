@@ -7,7 +7,13 @@ import { discoverPage } from './page-discovery';
 import { serviceJson } from './discovery-services';
 import { reserveSource } from './database';
 import { matchCandidate } from './matching';
-import { canonicalText, titleRelevance, webQueries } from './search-queries';
+import {
+  canonicalText,
+  supplierWebQueries,
+  titleRelevance,
+  webQueries,
+  withMarketName,
+} from './search-queries';
 import { extractedPageEvidence } from './extracted-page';
 import { normalizeGtin, type SearchProduct } from './validation';
 import { SUPPLIER_MARKETS, type SupplierMarket } from '../search-sources';
@@ -129,6 +135,7 @@ export async function searchWebDiscovery(
   mode: 'moldova' | 'expanded' = 'expanded',
   market?: SupplierMarket,
   checkExactPhoto?: (candidates: Candidate[]) => Promise<boolean>,
+  marketName?: string,
 ) {
   const candidates: Candidate[] = [],
     diagnostics: SearchDiagnostic[] = [],
@@ -139,14 +146,11 @@ export async function searchWebDiscovery(
   let reads = 0;
   let searches = 0;
   const selectedMarket = mode === 'expanded' ? market : undefined;
+  const marketConfig = selectedMarket ? SUPPLIER_MARKETS[selectedMarket] : undefined;
+  const discovery = withMarketName(product, marketConfig ? marketName : undefined);
   const usableExact = (matches: Candidate[]) =>
     !selectedMarket && exact(product, matches) && (checkExactPhoto?.(matches) ?? true);
-  const scopeDomains =
-    mode === 'moldova'
-      ? MOLDOVA_WEB_DOMAINS
-      : selectedMarket
-        ? SUPPLIER_MARKETS[selectedMarket].domains
-        : [];
+  const scopeDomains = mode === 'moldova' ? MOLDOVA_WEB_DOMAINS : (marketConfig?.domains ?? []);
   const inScope = (url: string) => {
     const host = new URL(url).hostname;
     return (
@@ -208,18 +212,25 @@ export async function searchWebDiscovery(
           throw new ApiError(429, 'Бесплатная квота Tavily исчерпана; платный переход запрещён.');
       }
       const queryProduct =
-        (provider === 'tavily' || max === 1 || !!selectedMarket) &&
-        webQueries({ ...product, ean: '' }, 1).length
+        (provider === 'tavily' || max === 1) && webQueries({ ...product, ean: '' }, 1).length
           ? { ...product, ean: '' }
           : product;
-      for (const rawQuery of webQueries(queryProduct, max)) {
+      const queries = marketConfig
+        ? supplierWebQueries(discovery, max)
+        : webQueries(queryProduct, max);
+      for (const rawQuery of queries) {
+        const nameQuery = !/^"\d+"$/.test(rawQuery);
         const scope = scopeDomains
           .filter((domain) => !domain.startsWith('www.'))
           .map((domain) => `site:${domain}`)
           .join(' OR ');
+        const languageFilter =
+          marketConfig && nameQuery && (marketName || (selectedMarket === 'RO' && product.nameRo))
+            ? ` lang:${marketConfig.language}`
+            : '';
         const query =
           scope && provider === 'brave'
-            ? `${rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '').slice(0, 400 - scope.length - 3)} (${scope})`
+            ? `${rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '').slice(0, 400 - scope.length - languageFilter.length - 3)} (${scope})${languageFilter}`
             : mode === 'moldova'
               ? `${rawQuery.replace(/\s+\([^)]*site:[^)]*\)$/, '').slice(0, 392)} Moldova`
               : selectedMarket
@@ -233,7 +244,7 @@ export async function searchWebDiscovery(
           endpoint.search = new URLSearchParams({
             q: query,
             count: '10',
-            country: selectedMarket ?? 'ALL',
+            country: 'ALL',
             safesearch: 'strict',
             spellcheck: 'false',
           }).toString();
@@ -268,8 +279,17 @@ export async function searchWebDiscovery(
             include_images: mode !== 'moldova',
             ...(mode === 'moldova' ? {} : { include_image_descriptions: true }),
             include_usage: true,
+            ...(marketConfig
+              ? {
+                  country: marketConfig.country,
+                  ...(nameQuery ? { language: marketConfig.language } : {}),
+                }
+              : {}),
             ...(scopeDomains.length
-              ? { include_domains: [...scopeDomains], include_domains_mode: 'prefer' }
+              ? {
+                  include_domains: [...scopeDomains],
+                  include_domains_mode: marketConfig ? 'restrict' : 'prefer',
+                }
               : {}),
           });
         }
@@ -286,7 +306,7 @@ export async function searchWebDiscovery(
           if (product.ean && routeGtin && normalizeGtin(product.ean) !== normalizeGtin(routeGtin))
             continue;
           if (!inScope(pageUrl)) continue;
-          const relevant = titleRelevance(product, title) >= 0.35;
+          const relevant = titleRelevance(discovery, title) >= 0.35;
           const barcodeMentioned =
             !!product.ean &&
             `${title} ${str(item.description)} ${pageUrl}`.includes(
@@ -299,7 +319,7 @@ export async function searchWebDiscovery(
             pages.add(pageUrl);
             reads++;
             try {
-              const result = await discoverPage(pageUrl, product);
+              const result = await discoverPage(pageUrl, discovery);
               if (result.failure)
                 diagnostics.push(
                   sourceDiagnostic({
@@ -358,7 +378,7 @@ export async function searchWebDiscovery(
           for (const rawImage of images) {
             const imageUrl = safeUrl(typeof rawImage === 'string' ? rawImage : obj(rawImage).url);
             if (imageUrl)
-              found.push(...imageCandidate(imageUrl, pageUrl, title, provider, product));
+              found.push(...imageCandidate(imageUrl, pageUrl, title, provider, discovery));
           }
         }
         if (await usableExact(found)) break;
@@ -396,7 +416,7 @@ export async function searchWebDiscovery(
           if (Array.isArray(extracted.results))
             for (const page of extracted.results) {
               if (!urls.includes(str(obj(page).url))) continue;
-              const evidence = extractedPageEvidence(page, product);
+              const evidence = extractedPageEvidence(page, discovery);
               if (evidence.conflict) conflicts.add(str(obj(page).url));
               found.push(...evidence.candidates);
             }
