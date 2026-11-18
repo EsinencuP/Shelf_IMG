@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 
 const reportPath = resolve('.runtime/browser-qa-results.json');
@@ -29,7 +31,36 @@ function run(args, timeout) {
   return result;
 }
 const install = run(['install', '--only-shell', 'chromium'], 120_000);
-const test = install.status === 0 ? run(['test', '--reporter=json'], 480_000) : null;
+const prefix = resolve('.runtime/chromium-runtime');
+const packed = spawnSync('npm', ['install', '--ignore-scripts', '--no-save', '--package-lock=false', '--no-audit', '--no-fund', '--prefix', prefix, '@sparticuz/chromium@153.0.0'], { timeout: 180_000, encoding: 'utf8' });
+process.stdout.write(packed.stdout ?? '');
+process.stderr.write(packed.stderr ?? '');
+let browser = null;
+let bootFailure = '';
+try {
+  if (packed.status !== 0) throw new Error('Serverless Chromium npm package failed to install.');
+  process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs24.x';
+  const find = createRequire(resolve(prefix, 'package.json'));
+  const imported = await import(pathToFileURL(find.resolve('@sparticuz/chromium')).href);
+  const serverless = imported.default?.executablePath ? imported.default : imported.default?.default;
+  if (!serverless?.executablePath) throw new Error('Serverless Chromium loader export was not found.');
+  const fallback = await serverless.executablePath();
+  env.LD_LIBRARY_PATH = process.env.LD_LIBRARY_PATH ?? '/tmp/al2023/lib';
+  const { chromium } = await import('playwright-core');
+  const headlessShell = join(dirname(chromium.executablePath()), '..', '..', 'chromium_headless_shell-1248', 'chrome-headless-shell-linux64', 'chrome-headless-shell');
+  const deps = spawnSync('ldd', [headlessShell], { env, encoding: 'utf8' });
+  if (deps.status === 0 && !/not found/i.test(deps.stdout)) {
+    browser = 'playwright-chromium-156 + AL2023 libraries';
+  } else {
+    browser = 'serverless-chromium-153';
+    env.SHELF_QA_CHROMIUM_PATH = fallback;
+    env.SHELF_QA_CHROMIUM_ARGS = JSON.stringify(serverless.args);
+  }
+} catch (error) {
+  bootFailure = error instanceof Error ? error.message : String(error);
+  console.error('Browser bootstrap error:', bootFailure);
+}
+const test = browser ? run(['test', '--config=playwright.qa.config.ts', '--reporter=json'], 480_000) : null;
 const reportText = await readFile(reportPath, 'utf8').catch(() => 'null');
 let report;
 try { report = JSON.parse(reportText); } catch { report = null; }
@@ -52,6 +83,9 @@ function failedTests(suites) {
 const result = {
   commit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
   installExitCode: install.status,
+  packagedBrowserExitCode: packed.status,
+  browser,
+  bootFailure: /token|secret|password|credential|authorization/i.test(bootFailure) ? 'Browser bootstrap failed' : bootFailure.slice(0, 400),
   testExitCode: test?.status ?? null,
   timeout: test?.error?.code === 'ETIMEDOUT',
   stats: report?.stats ?? null,
