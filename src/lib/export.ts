@@ -56,13 +56,11 @@ function exclusionReason(row: ProductRow): string | undefined {
   return undefined;
 }
 
-/** Builds an auditable ZIP. Every source row is reported; only approved JPEGs enter images/. */
-export async function buildExportArchive(batch: Batch): Promise<Blob> {
-  const [{ default: JSZip }, { default: ExcelJS }] = await Promise.all([
-    import('jszip'),
-    import('exceljs'),
-  ]);
-  const zip = new JSZip();
+type AddEntry = (path: string, content: Blob) => Promise<void>;
+
+/** Writes the same images, report and attribution through either ZIP output. */
+async function writeExportEntries(batch: Batch, add: AddEntry): Promise<number> {
+  const { default: ExcelJS } = await import('exceljs');
   const names = assignNames(batch);
   const manifestRows = [];
   for (const [index, row] of batch.rows.entries()) {
@@ -70,14 +68,14 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
     let reason = exclusionReason(row);
     if (!reason && !names[index].requested.trim())
       reason = 'Отсутствует SKU или внутренний код для выбранного имени файла';
-    let bytes: Uint8Array | undefined;
-    if (!reason) {
-      bytes = new Uint8Array(await row.outputBlob!.arrayBuffer());
-      if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff)
+    const photo = row.outputBlob;
+    if (!reason && photo) {
+      const header = new Uint8Array(await photo.slice(0, 4).arrayBuffer());
+      if (header.length < 4 || header[0] !== 0xff || header[1] !== 0xd8 || header[2] !== 0xff)
         reason = 'Готовый файл не является JPEG. Повторите обработку.';
     }
     const filename = reason ? null : `images/${names[index].stem}.jpg`;
-    if (filename && bytes) zip.file(filename, bytes);
+    if (filename && photo) await add(filename, photo);
     manifestRows.push({
       rowId: row.id,
       sourceRow: row.sourceRow,
@@ -235,27 +233,88 @@ export async function buildExportArchive(batch: Batch): Promise<Blob> {
     row.alignment = { vertical: 'top', wrapText: true };
     if (row.number > 1) row.height = 44;
   });
-  zip.file('report.xlsx', new Uint8Array(await workbook.xlsx.writeBuffer()));
-  zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+  await add('report.xlsx', new Blob([new Uint8Array(await workbook.xlsx.writeBuffer())]));
+  await add('manifest.json', new Blob([JSON.stringify(manifest, null, 2)]));
   const attributions = manifestRows
     .map(
       (row) =>
         `Строка ${row.sourceRow} · SKU ${row.sku || '(пусто)'}\nФайл: ${row.fileName ?? '(не экспортирован)'}\nСтраница: ${row.source?.pageUrl || '(не указана)'}\nИзображение: ${row.source?.imageUrl || '(не указано)'}\nПрава источника: ${row.source?.rights ?? 'не указаны'}\nЛицензия: ${row.source?.license ?? 'не указана'}\nПодтверждение прав пользователем: ${row.rightsConfirmed ? 'да' : 'нет'}\nПричина исключения: ${row.exclusionReason ?? '—'}\n`,
     )
     .join('\n');
-  zip.file(
+  await add(
     'attributions.txt',
-    `Shelf Image Studio\nПартия: ${batch.name}\nПодтверждение пользователя фиксирует его решение и не создаёт лицензию на фотографию.\n\n${attributions}`,
+    new Blob([
+      `Shelf Image Studio\nПартия: ${batch.name}\nПодтверждение пользователя фиксирует его решение и не создаёт лицензию на фотографию.\n\n${attributions}`,
+    ]),
   );
+  return manifest.exportedImages;
+}
+
+async function bufferArchive(batch: Batch) {
+  const { default: JSZip } = await import('jszip');
+  const zip = new JSZip();
+  const exported = await writeExportEntries(batch, async (path, content) => {
+    zip.file(path, new Uint8Array(await content.arrayBuffer()));
+  });
   const archive = await zip.generateAsync({
     type: 'uint8array',
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
-  return new Blob([archive as BlobPart], { type: 'application/zip' });
+  return { archive: new Blob([archive as BlobPart], { type: 'application/zip' }), exported };
 }
 
-export async function exportBatch(batch: Batch): Promise<void> {
-  const archive = await buildExportArchive(batch);
-  downloadBlob(archive, `${safeFileStem(batch.name)}_Shelf.zip`);
+export async function buildExportArchive(batch: Batch): Promise<Blob> {
+  return (await bufferArchive(batch)).archive;
+}
+
+export async function streamExportArchive(
+  batch: Batch,
+  output: WritableStream<Uint8Array<ArrayBuffer>>,
+): Promise<number> {
+  const writer = output.getWriter();
+  try {
+    const { StreamingZip } = await import('./streaming-zip');
+    const zip = new StreamingZip(writer);
+    const exported = await writeExportEntries(batch, (path, content) => zip.add(path, content));
+    await zip.close();
+    return exported;
+  } catch (error) {
+    await writer.abort(error).catch(() => {});
+    throw error;
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+type SavePickerWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: { description: string; accept: Record<string, string[]> }[];
+  }) => Promise<FileSystemFileHandle>;
+};
+
+export async function exportBatch(batch: Batch): Promise<number | null> {
+  const filename = `${safeFileStem(batch.name)}_Shelf.zip`;
+  const bytes = batch.rows.reduce(
+    (sum, row) => sum + (exclusionReason(row) ? 0 : (row.outputBlob?.size ?? 0)),
+    0,
+  );
+  const browser = window as SavePickerWindow;
+  if (bytes >= 32 * 1024 * 1024 && browser.showSaveFilePicker) {
+    let file: FileSystemFileHandle | undefined;
+    try {
+      file = await browser.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'Архив Shelf', accept: { 'application/zip': ['.zip'] } }],
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return null;
+      if (!(error instanceof DOMException && error.name === 'SecurityError')) throw error;
+    }
+    if (file) return streamExportArchive(batch, await file.createWritable());
+  }
+  const { archive, exported } = await bufferArchive(batch);
+  downloadBlob(archive, filename);
+  return exported;
 }

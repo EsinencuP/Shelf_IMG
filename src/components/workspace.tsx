@@ -269,18 +269,7 @@ export default function Workspace() {
       .finally(() => {
         if (alive) setLoaded(true);
       });
-    configPromiseRef.current = fetch('/api/config')
-      .then((response) => response.json())
-      .then((value) => {
-        if (alive) {
-          setConfig(value);
-          configRef.current = value;
-        }
-        return value as AppConfig;
-      })
-      .catch(() => {
-        if (alive)
-          setToast({
+    configPromiseRef.current = fetch('/api/confi      setToast({
             message: 'Не удалось проверить источники. Загрузка своих фото доступна.',
             error: true,
           });
@@ -872,8 +861,9 @@ export default function Workspace() {
     if (!batch || exporting || busy) return;
     setExporting(true);
     try {
-      await exportBatch(batch);
-      notify(`Архив подготовлен: ${ready} JPG и отчёт по всем ${rows.length} строкам.`);
+      const exported = await exportBatch(batch);
+      if (exported !== null)
+        notify(`Архив подготовлен: ${exported} JPG и отчёт по всем ${batch.rows.length} строкам.`);
     } catch (error) {
       notify(errorText(error), true);
     } finally {

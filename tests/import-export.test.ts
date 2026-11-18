@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { createRows, eanIssue, parseFile, suggestMapping } from '../src/lib/import';
-import { buildExportArchive, safeFileStem } from '../src/lib/export';
+import {
+  buildExportArchive,
+  exportBatch,
+  safeFileStem,
+  streamExportArchive,
+} from '../src/lib/export';
 import { DEFAULT_PROFILE, type Batch } from '../src/lib/types';
 
 describe('Excel and CSV import', () => {
@@ -138,6 +143,36 @@ describe('Excel and CSV import', () => {
 });
 
 describe('Auditable export', () => {
+  it('asks for a destination before reading a large export and handles dismissal', async () => {
+    const rows = createRows(
+      { name: 'test', headers: ['SKU', 'Название'], rows: [['00123', 'Товар']], warnings: [] },
+      { sku: 0, nameRu: 1 },
+    );
+    const outputBlob = new Blob(Array<Blob>(32).fill(new Blob([new Uint8Array(1024 * 1024)])));
+    const slice = vi.spyOn(outputBlob, 'slice');
+    Object.assign(rows[0], { status: 'ready', confirmed: true, rightsConfirmed: true, outputBlob });
+    const batch: Batch = {
+      id: 'large',
+      name: 'Контроль',
+      createdAt: new Date().toISOString(),
+      profile: DEFAULT_PROFILE,
+      rows,
+    };
+    const showSaveFilePicker = vi.fn(async () => {
+      throw new DOMException('Picker dismissed', 'AbortError');
+    });
+    vi.stubGlobal('window', { showSaveFilePicker });
+    try {
+      expect(await exportBatch(batch)).toBeNull();
+      expect(showSaveFilePicker).toHaveBeenCalledWith(
+        expect.objectContaining({ suggestedName: 'Контроль_Shelf.zip' }),
+      );
+      expect(slice).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('uses SKU for missing internal codes and records the naming fallback', async () => {
     const rows = createRows(
       { name: 'test', headers: ['SKU', 'Название'], rows: [['SKU-1', 'Товар']], warnings: [] },
@@ -216,5 +251,39 @@ describe('Auditable export', () => {
     expect(workbook.worksheets[0].getCell('D2').value).toBe('00012345600012');
     expect(await zip.file('attributions.txt')!.async('string')).toContain('Строка 5');
     expect(safeFileStem('a/b:*?')).toBe('a_b___');
+
+    const chunks: Uint8Array<ArrayBuffer>[] = [];
+    const count = await streamExportArchive(
+      batch,
+      new WritableStream({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+      }),
+    );
+    expect(count).toBe(2);
+    const streamed = await JSZip.loadAsync(await new Blob(chunks).arrayBuffer(), {
+      checkCRC32: true,
+    });
+    expect(
+      Object.keys(streamed.files)
+        .filter((name) => !streamed.files[name].dir)
+        .sort(),
+    ).toEqual(
+      Object.keys(zip.files)
+        .filter((name) => !zip.files[name].dir)
+        .sort(),
+    );
+    for (const name of images)
+      expect(await streamed.file(name)!.async('uint8array')).toEqual(
+        await zip.file(name)!.async('uint8array'),
+      );
+    const streamedManifest = JSON.parse(await streamed.file('manifest.json')!.async('string'));
+    expect(streamedManifest.rows).toEqual(manifest.rows);
+    const streamedReport = new ExcelJS.Workbook();
+    await streamedReport.xlsx.load(
+      (await streamed.file('report.xlsx')!.async('nodebuffer')) as never,
+    );
+    expect(streamedReport.worksheets[0].getCell('D2').value).toBe('00012345600012');
   });
 });
